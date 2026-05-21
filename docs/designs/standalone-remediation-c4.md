@@ -216,111 +216,177 @@ It can be triggered automatically by observed signals such as repeated 503 error
 
 ## C4 Level 3: Remediation Runtime
 
+Remediation is the controlled journey from "we think we know the fix" to "we safely changed the system and proved whether it worked."
+
 ```text
-+------------------------------------------------------------------------+
-|                         Remediation Runtime                            |
-|------------------------------------------------------------------------|
-|                                                                        |
-| +----------------------+                                               |
-| | Remediation Intake   |                                               |
-| |----------------------|                                               |
-| | receives candidate   |                                               |
-| | fixes from workers   |                                               |
-| +----------+-----------+                                               |
-|            |                                                           |
-|            v                                                           |
-| +----------------------+       +----------------------+                |
-| | Change Planner       | ----> | Rollback Planner     |                |
-| |----------------------|       |----------------------|                |
-| | file/config/DB/deps  |       | snapshot, reverse,   |                |
-| | diff and target plan |       | manual, unavailable  |                |
-| +----------+-----------+       +----------+-----------+                |
-|            |                              |                            |
-|            +--------------+---------------+                            |
-|                           v                                            |
-| +----------------------+       +----------------------+                |
-| | Safety Gate          | ----> | Approval Coordinator |                |
-| |----------------------|       |----------------------|                |
-| | risk, blast radius,  |       | user prompts, policy,|                |
-| | policy, confidence   |       | timeout, delegation  |                |
-| +----------+-----------+       +----------+-----------+                |
-|            |                              |                            |
-|            | approved / auto-safe          | approved                   |
-|            v                              v                            |
-| +----------------------+       +----------------------+                |
-| | Execution Guard      | ----> | Fix Executor         |                |
-| |----------------------|       |----------------------|                |
-| | locks, idempotency,  |       | applies guarded file,|                |
-| | dry-run, prechecks   |       | config, DB, dep fix  |                |
-| +----------+-----------+       +----------+-----------+                |
-|            |                              |                            |
-|            v                              v                            |
-| +----------------------+       +----------------------+                |
-| | Post-Fix Monitor     | ----> | Rollback Executor    |                |
-| |----------------------|       |----------------------|                |
-| | checks error rate,   |       | runs if verification |                |
-| | health, traces       |       | fails or user asks   |                |
-| +----------+-----------+       +----------+-----------+                |
-|            |                              |                            |
-|            +--------------+---------------+                            |
-|                           v                                            |
-|                 +----------------------+                               |
-|                 | Receipt Publisher    |                               |
-|                 |----------------------|                               |
-|                 | before/after state,  |                               |
-|                 | audit, webhooks      |                               |
-|                 +----------------------+                               |
-|                                                                        |
-+------------------------------------------------------------------------+
++-----------------------------+
+| 1. Candidate Fix Found      |
+|-----------------------------|
+| ai-logfixer thinks it knows |
+| what change may fix the     |
+| problem.                    |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| 2. Build Fix Preview        |
+|-----------------------------|
+| Show exactly what would     |
+| change before touching      |
+| anything.                   |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| 3. Build Rollback Plan      |
+|-----------------------------|
+| Decide how to undo the      |
+| change if it fails.         |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| 4. Safety Check             |
+|-----------------------------|
+| Decide if this is low risk, |
+| high risk, or blocked.      |
++-------------+---------------+
+              |
+              v
++-----------------------------+
+| 5. Need Approval?           |
++-------------+---------------+
+              |
+        +-----+------+
+        |            |
+       No           Yes
+        |            |
+        v            v
++-------------+   +-----------------------+
+| 6A. Auto    |   | 6B. Ask User          |
+| Apply If    |   |-----------------------|
+| Safe        |   | Explain the fix, risk,|
++------+------+   | rollback, and wait   |
+       |          | for approval.         |
+       |          +----------+------------+
+       |                     |
+       |              +------+------+
+       |              |             |
+       |          Approved       Denied
+       |              |             |
+       |              v             v
+       |       +-------------+   +----------------+
+       |       | Apply Fix   |   | Stop And Save  |
+       |       | Carefully   |   | Decision       |
+       |       +------+------+   +----------------+
+       |              |
+       +--------------+
+              |
+              v
++-----------------------------+
+| 7. Watch The System         |
+|-----------------------------|
+| Did errors stop? Did health |
+| improve? Did new errors     |
+| appear?                     |
++-------------+---------------+
+              |
+       +------+------+
+       |             |
+    Worked        Failed
+       |             |
+       v             v
++-------------+   +-----------------------+
+| 8A. Save    |   | 8B. Rollback Or       |
+| Success     |   | Escalate              |
+| Receipt     |   |-----------------------|
++-------------+   | Undo if possible, or  |
+                  | ask human for help.   |
+                  +----------+------------+
+                             |
+                             v
+                  +-----------------------+
+                  | 9. Save Failure       |
+                  | Receipt               |
+                  +-----------------------+
 ```
 
 ## Remediation Decision Flow
 
 ```text
-----------------------+
-| Candidate Fix       |
-+----------+-----------+
-           |
-           v
-+----------------------+
-| Can plan safe diff?  |
-+----------+-----------+
-           |
-   no      |      yes
-   v       |      v
-+----------+   +----------------------+
-| Ask user |   | Can plan rollback?   |
-| for more |   +----------+-----------+
-| context  |              |
-+----------+       no     |     yes
-                   v      |     v
-          +---------------+ +----------------------+
-          | Require manual | | Safety classification|
-          | approval       | +----------+-----------+
-          +---------------+            |
-                                       v
-                            +----------------------+
-                            | Approval needed?     |
-                            +----------+-----------+
-                                       |
-                               no      |      yes
-                               v       |      v
-                      +----------------+ +----------------------+
-                      | Execute guarded | | Ask user / platform  |
-                      | auto-safe fix   | | for approval         |
-                      +-------+--------+ +----------+-----------+
-                              |                     |
-                              +----------+----------+
-                                         v
-                              +----------------------+
-                              | Monitor outcome      |
-                              +----------+-----------+
-                                         |
-                              success    |    failure
-                              v          v
-                      +-------------+  +----------------------+
-                      | Receipt     |  | Rollback or escalate |
-                      +-------------+  +----------------------+
+Problem understood
+        |
+        v
+Candidate fix selected
+        |
+        v
+Fix preview created
+        |
+        v
+Rollback plan created
+        |
+        v
+Risk checked
+        |
+        v
++--------------------+
+| Approval required? |
++---------+----------+
+          |
+   +------+------+
+   |             |
+  No            Yes
+   |             |
+   v             v
+Auto-apply   Ask user/platform
+if safe      for approval
+   |             |
+   |      +------+------+
+   |      |             |
+   |   Approved       Denied
+   |      |             |
+   |      v             v
+   |   Apply fix     Stop
+   |      |
+   +------+
+          |
+          v
+Monitor result
+          |
+   +------+------+
+   |             |
+ Worked        Failed
+   |             |
+   v             v
+Save        Rollback if possible
+success          |
+receipt          v
+            Save failure
+            receipt
+```
+
+The user should see progress throughout remediation:
+
+```text
+I found a likely fix.
+        |
+        v
+This is what I want to change.
+        |
+        v
+This is the rollback plan.
+        |
+        v
+This is the risk level. I need approval.
+        |
+        v
+Applying fix now.
+        |
+        v
+Watching system health.
+        |
+        v
+Fix worked. Receipt saved.
 ```
 
 ## Investigation Cluster Model
