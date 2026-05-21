@@ -1,0 +1,58 @@
+{
+  "id": "diag_runtime_pool_change_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "Database connection exhaustion is likely caused by an undersized runtime pool.",
+  "confidence": 0.79,
+  "suspected_root_cause": "The application connection pool is lower than observed request concurrency.",
+  "affected_services": ["billing-api", "postgres-primary"],
+  "evidence_items": [
+    {
+      "id": "ev_metric_pool_001",
+      "type": "metric",
+      "source": "billing-api/db_pool",
+      "timestamp": "2026-05-21T08:05:00Z",
+      "title": "Connection pool saturated",
+      "summary": "The pool reached its maximum for five consecutive minutes.",
+      "raw_excerpt": "db_pool_in_use=20 db_pool_max=20",
+      "redaction_state": "not_needed",
+      "related_ids": []
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "rec_pool_review_001",
+      "title": "Review and adjust connection pool settings",
+      "reason": "Current pool size appears too small for observed concurrency.",
+      "confidence": 0.78,
+      "steps": ["Review current pool limits.", "Preview a controlled pool increase.", "Request production approval."],
+      "required_permissions": ["app:config:read", "app:config:approve"],
+      "estimated_risk": "high_risk",
+      "requires_approval": true
+    }
+  ],
+  "patch_plan": {
+    "id": "patch_pool_size_001",
+    "target_type": "runtime_setting",
+    "target_refs": ["billing-api.DB_POOL_MAX"],
+    "diff_preview": {
+      "before": "DB_POOL_MAX=20",
+      "after": "DB_POOL_MAX=40"
+    },
+    "risk_level": "high_risk",
+    "requires_approval": true,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_pool_size_001",
+    "rollback_type": "restore_config",
+    "snapshot_refs": ["config_snapshot_2026_05_21_080000"],
+    "restore_steps": ["Restore DB_POOL_MAX=20.", "Restart billing-api during approved window."],
+    "limitations": ["Reducing the pool may reintroduce connection exhaustion."],
+    "risk_level": "high_risk",
+    "requires_manual_review": true
+  },
+  "safety_classification": "high_risk",
+  "created_at": "2026-05-21T08:06:00Z"
+}

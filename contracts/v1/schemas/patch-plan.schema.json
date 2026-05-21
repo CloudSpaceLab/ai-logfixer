@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/patch-plan.schema.json",
+  "title": "PatchPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "target_type",
+    "target_refs",
+    "diff_preview",
+    "risk_level",
+    "requires_approval",
+    "blocked_reasons"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "target_type": {
+      "type": "string",
+      "enum": ["file", "db_schema", "config", "dependency", "runtime_setting"]
+    },
+    "target_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "diff_preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after"],
+      "properties": {
+        "before": { "type": "string", "minLength": 1 },
+        "after": { "type": "string", "minLength": 1 }
+      }
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["read_only", "low_risk", "medium_risk", "high_risk", "critical_risk", "blocked"]
+    },
+    "requires_approval": { "type": "boolean" },
+    "blocked_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

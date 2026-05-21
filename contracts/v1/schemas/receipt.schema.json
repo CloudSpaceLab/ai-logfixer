@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/receipt.schema.json",
+  "title": "Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "diagnosis_id",
+    "action_taken",
+    "actor",
+    "approver",
+    "timestamp",
+    "before_state",
+    "after_state",
+    "audit_refs",
+    "knowledge_tree_refs"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "diagnosis_id": { "type": "string", "minLength": 1 },
+    "action_taken": { "type": "string", "minLength": 1 },
+    "actor": { "type": "string", "minLength": 1 },
+    "approver": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "before_state": { "type": "string", "minLength": 1 },
+    "after_state": { "type": "string", "minLength": 1 },
+    "audit_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "knowledge_tree_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

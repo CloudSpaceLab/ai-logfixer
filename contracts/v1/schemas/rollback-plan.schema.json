@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/rollback-plan.schema.json",
+  "title": "RollbackPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "rollback_type",
+    "snapshot_refs",
+    "restore_steps",
+    "limitations",
+    "risk_level",
+    "requires_manual_review"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "rollback_type": {
+      "type": "string",
+      "enum": ["snapshot", "reverse_patch", "migration_down", "restore_config", "manual_only", "unavailable"]
+    },
+    "snapshot_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "restore_steps": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["read_only", "low_risk", "medium_risk", "high_risk", "critical_risk", "blocked"]
+    },
+    "requires_manual_review": { "type": "boolean" }
+  }
+}

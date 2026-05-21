@@ -1,0 +1,79 @@
+{
+  "id": "diag_web_500_failed_migration_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "Repeated HTTP 500 errors are likely caused by an application/database schema mismatch.",
+  "confidence": 0.87,
+  "suspected_root_cause": "Application code expects a database column that is missing from the current schema.",
+  "affected_services": ["checkout-api", "postgres-primary"],
+  "evidence_items": [
+    {
+      "id": "ev_app_log_001",
+      "type": "log",
+      "source": "checkout-api/application.log",
+      "timestamp": "2026-05-21T08:00:00Z",
+      "title": "Application raised missing column error",
+      "summary": "The application log shows requests failing because the orders table does not include expected column customer_segment.",
+      "raw_excerpt": "ERROR column orders.customer_segment does not exist",
+      "redaction_state": "redacted",
+      "related_ids": ["ev_db_schema_001"]
+    },
+    {
+      "id": "ev_db_schema_001",
+      "type": "db",
+      "source": "postgres-primary/information_schema",
+      "timestamp": "2026-05-21T08:00:15Z",
+      "title": "Database schema lacks expected column",
+      "summary": "The live schema does not include customer_segment on the orders table.",
+      "raw_excerpt": "table=orders columns=id,total,status,created_at",
+      "redaction_state": "not_needed",
+      "related_ids": ["ev_app_log_001"]
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "rec_verify_migration_001",
+      "title": "Verify schema drift and prepare safe migration",
+      "reason": "The application and database schema appear to be out of sync.",
+      "confidence": 0.84,
+      "steps": [
+        "Check the latest applied migration version.",
+        "Compare expected application schema with the live database schema.",
+        "Preview the migration before requesting approval."
+      ],
+      "required_permissions": ["db:schema:read", "deploy:approve"],
+      "estimated_risk": "medium_risk",
+      "requires_approval": true
+    }
+  ],
+  "patch_plan": {
+    "id": "patch_add_customer_segment_001",
+    "target_type": "db_schema",
+    "target_refs": ["postgres-primary.public.orders"],
+    "diff_preview": {
+      "before": "orders(id, total, status, created_at)",
+      "after": "orders(id, total, status, created_at, customer_segment)"
+    },
+    "risk_level": "medium_risk",
+    "requires_approval": true,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_customer_segment_001",
+    "rollback_type": "migration_down",
+    "snapshot_refs": ["schema_snapshot_2026_05_21_075900"],
+    "restore_steps": [
+      "Stop writes to the affected table if data has been written to customer_segment.",
+      "Run the reverse migration after approval.",
+      "Verify application errors return to baseline."
+    ],
+    "limitations": [
+      "Rollback may require manual review if customer_segment receives production data."
+    ],
+    "risk_level": "medium_risk",
+    "requires_manual_review": true
+  },
+  "safety_classification": "medium_risk",
+  "created_at": "2026-05-21T08:01:00Z"
+}

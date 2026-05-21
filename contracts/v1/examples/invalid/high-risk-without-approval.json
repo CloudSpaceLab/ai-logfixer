@@ -1,0 +1,44 @@
+{
+  "id": "diag_high_risk_without_approval",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "This payload has a high-risk patch without approval.",
+  "confidence": 0.8,
+  "suspected_root_cause": "Unsafe patch metadata.",
+  "affected_services": ["billing-api"],
+  "evidence_items": [
+    {
+      "id": "ev_metric_001",
+      "type": "metric",
+      "source": "billing-api/db_pool",
+      "timestamp": "2026-05-21T08:14:00Z",
+      "title": "Pool saturation",
+      "summary": "Pool is saturated.",
+      "raw_excerpt": "db_pool_in_use=20 db_pool_max=20",
+      "redaction_state": "not_needed",
+      "related_ids": []
+    }
+  ],
+  "recommendations": [],
+  "patch_plan": {
+    "id": "patch_pool_size_bad",
+    "target_type": "runtime_setting",
+    "target_refs": ["billing-api.DB_POOL_MAX"],
+    "diff_preview": { "before": "DB_POOL_MAX=20", "after": "DB_POOL_MAX=40" },
+    "risk_level": "high_risk",
+    "requires_approval": false,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_pool_size_001",
+    "rollback_type": "restore_config",
+    "snapshot_refs": ["config_snapshot_001"],
+    "restore_steps": ["Restore DB_POOL_MAX=20."],
+    "limitations": [],
+    "risk_level": "medium_risk",
+    "requires_manual_review": false
+  },
+  "safety_classification": "high_risk",
+  "created_at": "2026-05-21T08:14:00Z"
+}

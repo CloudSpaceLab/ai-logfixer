@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/evidence-item.schema.json",
+  "title": "EvidenceItem",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "type",
+    "source",
+    "timestamp",
+    "title",
+    "summary",
+    "raw_excerpt",
+    "redaction_state",
+    "related_ids"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "type": {
+      "type": "string",
+      "enum": ["log", "trace", "metric", "db", "config", "cve"]
+    },
+    "source": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "title": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "raw_excerpt": { "type": "string" },
+    "redaction_state": {
+      "type": "string",
+      "enum": ["redacted", "not_needed", "unknown", "failed"]
+    },
+    "related_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
