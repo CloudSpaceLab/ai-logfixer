@@ -19,6 +19,7 @@
     "display_status",
     "user_message",
     "external_refs",
+    "knowledge_refs",
     "created_at"
   ],
   "properties": {
@@ -38,6 +39,10 @@
     "external_refs": {
       "type": "array",
       "items": { "$ref": "external-ref.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
     },
     "created_at": { "type": "string", "format": "date-time" }
   }

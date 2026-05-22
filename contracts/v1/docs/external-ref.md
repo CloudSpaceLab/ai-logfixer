@@ -4,7 +4,7 @@
 
 Examples include:
 
-- ControlOne Knowledge Tree nodes
+- ControlOne records
 - Jira tickets
 - Slack threads
 - GitHub issues
@@ -18,3 +18,5 @@ Required fields:
 - `id`
 - `url`
 - `metadata`
+
+Use `KnowledgeRef` for knowledge graph node links. `ExternalRef` should remain a platform or system reference.

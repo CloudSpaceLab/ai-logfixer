@@ -41,6 +41,9 @@ func (d DiagnosisResult) Validate() error {
 	for index, ref := range d.ExternalRefs {
 		errs = append(errs, prefixErr(fmt.Sprintf("external_refs[%d]", index), ref.Validate())...)
 	}
+	for index, ref := range d.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
+	}
 
 	return errors.Join(errs...)
 }
@@ -60,6 +63,9 @@ func (e EvidenceItem) Validate() error {
 	}
 	for index, ref := range e.ExternalRefs {
 		errs = append(errs, prefixErr(fmt.Sprintf("external_refs[%d]", index), ref.Validate())...)
+	}
+	for index, ref := range e.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
 	}
 
 	return errors.Join(errs...)
@@ -138,6 +144,9 @@ func (r InvestigationRequest) Validate() error {
 	for index, ref := range r.ExternalRefs {
 		errs = append(errs, prefixErr(fmt.Sprintf("external_refs[%d]", index), ref.Validate())...)
 	}
+	for index, ref := range r.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
+	}
 
 	return errors.Join(errs...)
 }
@@ -189,6 +198,9 @@ func (p RemediationPlan) Validate() error {
 	errs = append(errs, prefixErr("rollback_plan", p.RollbackPlan.Validate())...)
 	for index, ref := range p.ExternalRefs {
 		errs = append(errs, prefixErr(fmt.Sprintf("external_refs[%d]", index), ref.Validate())...)
+	}
+	for index, ref := range p.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
 	}
 
 	return errors.Join(errs...)
@@ -266,6 +278,9 @@ func (r Receipt) Validate() error {
 	for index, ref := range r.ExternalRefs {
 		errs = append(errs, prefixErr(fmt.Sprintf("external_refs[%d]", index), ref.Validate())...)
 	}
+	for index, ref := range r.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
+	}
 
 	return errors.Join(errs...)
 }
@@ -276,6 +291,19 @@ func (r ExternalRef) Validate() error {
 	require(&errs, r.System != "", "system is required")
 	require(&errs, r.Type != "", "type is required")
 	require(&errs, r.ID != "", "id is required")
+
+	return errors.Join(errs...)
+}
+
+func (r KnowledgeRef) Validate() error {
+	var errs []error
+
+	require(&errs, r.GraphID != "", "graph_id is required")
+	require(&errs, r.NodeID != "", "node_id is required")
+	require(&errs, r.NodeType != "", "node_type is required")
+	require(&errs, r.Relationship != "", "relationship is required")
+	require(&errs, validConfidence(r.Confidence), "confidence must be between 0 and 1")
+	require(&errs, r.Source != "", "source is required")
 
 	return errors.Join(errs...)
 }

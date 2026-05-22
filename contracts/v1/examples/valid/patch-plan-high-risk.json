@@ -23,7 +23,8 @@
         "tone": "danger",
         "sections": ["metrics"]
       },
-      "external_refs": []
+      "external_refs": [],
+      "knowledge_refs": []
     }
   ],
   "recommendations": [
@@ -73,5 +74,6 @@
   ],
   "timeline_events": [],
   "external_refs": [],
+  "knowledge_refs": [],
   "created_at": "2026-05-21T08:06:00Z"
 }

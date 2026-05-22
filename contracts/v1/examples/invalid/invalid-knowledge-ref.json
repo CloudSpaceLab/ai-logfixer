@@ -1,27 +1,27 @@
 {
-  "id": "diag_unknown_evidence_type",
+  "id": "diag_invalid_knowledge_ref_001",
   "contract_version": "v1",
   "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
   "status": "complete",
-  "summary": "This payload has an unsupported evidence type.",
+  "summary": "This payload has an invalid knowledge reference.",
   "confidence": 0.8,
-  "suspected_root_cause": "Unsupported evidence type.",
+  "suspected_root_cause": "Invalid knowledge graph reference.",
   "affected_services": ["checkout-api"],
   "evidence_items": [
     {
-      "id": "ev_bad_001",
-      "type": "screenshot",
-      "source": "manual-upload",
-      "timestamp": "2026-05-21T08:13:00Z",
-      "title": "Unsupported evidence",
-      "summary": "Screenshots are not part of v1 EvidenceType.",
-      "raw_excerpt": "",
-      "redaction_state": "not_needed",
+      "id": "ev_valid_001",
+      "type": "log",
+      "source": "checkout-api/application.log",
+      "timestamp": "2026-05-21T08:18:00Z",
+      "title": "Valid evidence for knowledge ref test",
+      "summary": "This evidence is valid so the fixture targets the knowledge reference error.",
+      "raw_excerpt": "ERROR sample",
+      "redaction_state": "redacted",
       "related_ids": [],
       "ui_hints": {
-        "icon": "image",
-        "tone": "neutral",
-        "sections": []
+        "icon": "file-warning",
+        "tone": "warning",
+        "sections": ["evidence"]
       },
       "external_refs": [],
       "knowledge_refs": []
@@ -47,11 +47,20 @@
     "requires_manual_review": false
   },
   "safety_classification": "low_risk",
-  "display_status": "Invalid evidence type",
-  "user_message": "This payload has an unsupported evidence type.",
+  "display_status": "Invalid knowledge reference",
+  "user_message": "This payload is invalid because the knowledge reference is missing graph_id.",
   "next_actions": [],
   "timeline_events": [],
   "external_refs": [],
-  "knowledge_refs": [],
-  "created_at": "2026-05-21T08:13:00Z"
+  "knowledge_refs": [
+    {
+      "graph_id": "",
+      "node_id": "service_go_api",
+      "node_type": "service",
+      "relationship": "affects",
+      "confidence": 0.9,
+      "source": "fixture"
+    }
+  ],
+  "created_at": "2026-05-21T08:18:00Z"
 }

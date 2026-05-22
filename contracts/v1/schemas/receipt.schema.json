@@ -18,7 +18,8 @@
     "outcome",
     "summary",
     "timeline_events",
-    "external_refs"
+    "external_refs",
+    "knowledge_refs"
   ],
   "properties": {
     "id": { "type": "string", "minLength": 1 },
@@ -40,6 +41,10 @@
     "external_refs": {
       "type": "array",
       "items": { "$ref": "external-ref.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
     }
   }
 }

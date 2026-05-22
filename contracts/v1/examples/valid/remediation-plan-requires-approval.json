@@ -41,5 +41,15 @@
     }
   ],
   "external_refs": [],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "route_policy_orders_v41",
+      "node_type": "route_policy",
+      "relationship": "changes",
+      "confidence": 0.81,
+      "source": "remediation_planner"
+    }
+  ],
   "created_at": "2026-05-21T08:07:00Z"
 }

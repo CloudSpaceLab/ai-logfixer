@@ -72,6 +72,18 @@ func TestValidateRemediationAttemptRejectsMissingApproval(t *testing.T) {
 	}
 }
 
+func TestValidateDiagnosisResultRejectsInvalidKnowledgeRef(t *testing.T) {
+	result := loadDiagnosisResult(t, "../../../contracts/v1/examples/invalid/invalid-knowledge-ref.json")
+
+	err := result.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "knowledge_refs[0]: graph_id is required") {
+		t.Fatalf("expected knowledge ref validation error, got %q", err.Error())
+	}
+}
+
 func loadDiagnosisResult(t *testing.T, path string) DiagnosisResult {
 	t.Helper()
 	return loadJSON[DiagnosisResult](t, path)

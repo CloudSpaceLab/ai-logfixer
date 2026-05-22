@@ -16,6 +16,7 @@
     "display_status",
     "user_message",
     "timeline_events",
+    "knowledge_refs",
     "created_at",
     "updated_at"
   ],
@@ -39,6 +40,10 @@
     "timeline_events": {
       "type": "array",
       "items": { "$ref": "timeline-event.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
     },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" }

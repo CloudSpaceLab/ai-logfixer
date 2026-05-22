@@ -14,6 +14,7 @@
     "timeline_events",
     "next_actions",
     "external_refs",
+    "knowledge_refs",
     "created_at",
     "updated_at"
   ],
@@ -44,6 +45,10 @@
     "external_refs": {
       "type": "array",
       "items": { "$ref": "external-ref.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
     },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" }

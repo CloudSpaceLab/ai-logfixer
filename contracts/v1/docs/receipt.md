@@ -18,7 +18,8 @@ Required fields:
 - `summary`
 - `timeline_events`
 - `external_refs`
+- `knowledge_refs`
 
 Boundary rule:
 
-AI LogFixer owns the product receipt. External systems can be linked through `external_refs`.
+AI LogFixer owns the product receipt. External systems can be linked through `external_refs`. Knowledge graph context can be linked through `knowledge_refs`.

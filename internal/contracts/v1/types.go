@@ -153,6 +153,15 @@ type ExternalRef struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
+type KnowledgeRef struct {
+	GraphID      string  `json:"graph_id"`
+	NodeID       string  `json:"node_id"`
+	NodeType     string  `json:"node_type"`
+	Relationship string  `json:"relationship"`
+	Confidence   float64 `json:"confidence"`
+	Source       string  `json:"source"`
+}
+
 type NextAction struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
@@ -205,6 +214,7 @@ type DiagnosisResult struct {
 	NextActions          []NextAction            `json:"next_actions"`
 	TimelineEvents       []TimelineEvent         `json:"timeline_events"`
 	ExternalRefs         []ExternalRef           `json:"external_refs"`
+	KnowledgeRefs        []KnowledgeRef          `json:"knowledge_refs"`
 	CreatedAt            time.Time               `json:"created_at"`
 }
 
@@ -220,6 +230,7 @@ type EvidenceItem struct {
 	RelatedIDs     []string       `json:"related_ids"`
 	UIHints        UIHints        `json:"ui_hints"`
 	ExternalRefs   []ExternalRef  `json:"external_refs"`
+	KnowledgeRefs  []KnowledgeRef `json:"knowledge_refs"`
 }
 
 type RunbookRecommendation struct {
@@ -273,6 +284,7 @@ type InvestigationRequest struct {
 	DisplayStatus     string            `json:"display_status"`
 	UserMessage       string            `json:"user_message"`
 	ExternalRefs      []ExternalRef     `json:"external_refs"`
+	KnowledgeRefs     []KnowledgeRef    `json:"knowledge_refs"`
 	CreatedAt         time.Time         `json:"created_at"`
 }
 
@@ -286,6 +298,7 @@ type InvestigationCluster struct {
 	TimelineEvents []TimelineEvent       `json:"timeline_events"`
 	NextActions    []NextAction          `json:"next_actions"`
 	ExternalRefs   []ExternalRef         `json:"external_refs"`
+	KnowledgeRefs  []KnowledgeRef        `json:"knowledge_refs"`
 	CreatedAt      time.Time             `json:"created_at"`
 	UpdatedAt      time.Time             `json:"updated_at"`
 }
@@ -302,6 +315,7 @@ type InvestigationBranch struct {
 	DisplayStatus     string              `json:"display_status"`
 	UserMessage       string              `json:"user_message"`
 	TimelineEvents    []TimelineEvent     `json:"timeline_events"`
+	KnowledgeRefs     []KnowledgeRef      `json:"knowledge_refs"`
 	CreatedAt         time.Time           `json:"created_at"`
 	UpdatedAt         time.Time           `json:"updated_at"`
 }
@@ -337,6 +351,7 @@ type RemediationPlan struct {
 	NextActions       []NextAction         `json:"next_actions"`
 	TimelineEvents    []TimelineEvent      `json:"timeline_events"`
 	ExternalRefs      []ExternalRef        `json:"external_refs"`
+	KnowledgeRefs     []KnowledgeRef       `json:"knowledge_refs"`
 	CreatedAt         time.Time            `json:"created_at"`
 }
 
@@ -404,4 +419,5 @@ type Receipt struct {
 	Summary              string          `json:"summary"`
 	TimelineEvents       []TimelineEvent `json:"timeline_events"`
 	ExternalRefs         []ExternalRef   `json:"external_refs"`
+	KnowledgeRefs        []KnowledgeRef  `json:"knowledge_refs"`
 }
