@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/monitor-summary.schema.json",
+  "title": "MonitorSummary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "message", "signals", "duration"],
+  "properties": {
+    "status": { "type": "string" },
+    "message": { "type": "string" },
+    "signals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "duration": { "type": "string" }
+  }
+}

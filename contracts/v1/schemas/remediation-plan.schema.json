@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-plan.schema.json",
+  "title": "RemediationPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "contract_version",
+    "schema_url",
+    "diagnosis_result_id",
+    "summary",
+    "fix_preview",
+    "rollback_plan",
+    "risk_level",
+    "approval_required",
+    "status",
+    "display_status",
+    "user_message",
+    "next_actions",
+    "timeline_events",
+    "external_refs",
+    "knowledge_refs",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "contract_version": { "const": "v1" },
+    "schema_url": { "const": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-plan.schema.json" },
+    "diagnosis_result_id": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "fix_preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after"],
+      "properties": {
+        "before": { "type": "string", "minLength": 1 },
+        "after": { "type": "string", "minLength": 1 }
+      }
+    },
+    "rollback_plan": { "$ref": "rollback-plan.schema.json" },
+    "risk_level": {
+      "type": "string",
+      "enum": ["read_only", "low_risk", "medium_risk", "high_risk", "critical_risk", "blocked"]
+    },
+    "approval_required": { "type": "boolean" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "planning", "awaiting_approval", "approved", "denied", "running", "monitoring", "succeeded", "failed", "rolled_back", "escalated"]
+    },
+    "display_status": { "type": "string", "minLength": 1 },
+    "user_message": { "type": "string", "minLength": 1 },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "next-action.schema.json" }
+    },
+    "timeline_events": {
+      "type": "array",
+      "items": { "$ref": "timeline-event.schema.json" }
+    },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

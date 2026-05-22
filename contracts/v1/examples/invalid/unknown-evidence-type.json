@@ -1,0 +1,57 @@
+{
+  "id": "diag_unknown_evidence_type",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "This payload has an unsupported evidence type.",
+  "confidence": 0.8,
+  "suspected_root_cause": "Unsupported evidence type.",
+  "affected_services": ["checkout-api"],
+  "evidence_items": [
+    {
+      "id": "ev_bad_001",
+      "type": "screenshot",
+      "source": "manual-upload",
+      "timestamp": "2026-05-21T08:13:00Z",
+      "title": "Unsupported evidence",
+      "summary": "Screenshots are not part of v1 EvidenceType.",
+      "raw_excerpt": "",
+      "redaction_state": "not_needed",
+      "related_ids": [],
+      "ui_hints": {
+        "icon": "image",
+        "tone": "neutral",
+        "sections": []
+      },
+      "external_refs": [],
+      "knowledge_refs": []
+    }
+  ],
+  "recommendations": [],
+  "patch_plan": {
+    "id": "patch_001",
+    "target_type": "config",
+    "target_refs": ["checkout-api.CONFIG"],
+    "diff_preview": { "before": "A", "after": "B" },
+    "risk_level": "low_risk",
+    "requires_approval": false,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_001",
+    "rollback_type": "restore_config",
+    "snapshot_refs": ["snapshot_001"],
+    "restore_steps": ["Restore previous config."],
+    "limitations": [],
+    "risk_level": "low_risk",
+    "requires_manual_review": false
+  },
+  "safety_classification": "low_risk",
+  "display_status": "Invalid evidence type",
+  "user_message": "This payload has an unsupported evidence type.",
+  "next_actions": [],
+  "timeline_events": [],
+  "external_refs": [],
+  "knowledge_refs": [],
+  "created_at": "2026-05-21T08:13:00Z"
+}

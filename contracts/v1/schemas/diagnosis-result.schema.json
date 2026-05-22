@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "title": "DiagnosisResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "contract_version",
+    "schema_url",
+    "status",
+    "summary",
+    "confidence",
+    "suspected_root_cause",
+    "affected_services",
+    "evidence_items",
+    "recommendations",
+    "patch_plan",
+    "rollback_plan",
+    "safety_classification",
+    "display_status",
+    "user_message",
+    "next_actions",
+    "timeline_events",
+    "external_refs",
+    "knowledge_refs",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "contract_version": { "const": "v1" },
+    "schema_url": {
+      "const": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "complete", "failed", "needs_more_data", "unsupported_source", "blocked_by_safety"]
+    },
+    "summary": { "type": "string", "minLength": 1 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "suspected_root_cause": { "type": "string", "minLength": 1 },
+    "affected_services": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidence_items": {
+      "type": "array",
+      "items": { "$ref": "evidence-item.schema.json" }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": { "$ref": "runbook-recommendation.schema.json" }
+    },
+    "patch_plan": { "$ref": "patch-plan.schema.json" },
+    "rollback_plan": { "$ref": "rollback-plan.schema.json" },
+    "safety_classification": {
+      "type": "string",
+      "enum": ["read_only", "low_risk", "medium_risk", "high_risk", "critical_risk", "blocked"]
+    },
+    "display_status": { "type": "string", "minLength": 1 },
+    "user_message": { "type": "string", "minLength": 1 },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "next-action.schema.json" }
+    },
+    "timeline_events": {
+      "type": "array",
+      "items": { "$ref": "timeline-event.schema.json" }
+    },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

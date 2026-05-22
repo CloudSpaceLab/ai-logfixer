@@ -1,0 +1,57 @@
+{
+  "id": "diag_unavailable_rollback_without_limitations",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "This payload has an unavailable rollback without limitations.",
+  "confidence": 0.82,
+  "suspected_root_cause": "Unsafe rollback metadata.",
+  "affected_services": ["identity-api"],
+  "evidence_items": [
+    {
+      "id": "ev_cve_001",
+      "type": "cve",
+      "source": "dependency-scan",
+      "timestamp": "2026-05-21T08:15:00Z",
+      "title": "Known vulnerable package detected",
+      "summary": "Dependency version matches an advisory.",
+      "raw_excerpt": "package=example-auth version=1.4.2 advisory=CVE-2026-0001",
+      "redaction_state": "not_needed",
+      "related_ids": [],
+      "ui_hints": {
+        "icon": "shield-alert",
+        "tone": "danger",
+        "sections": ["cve"]
+      },
+      "external_refs": [],
+      "knowledge_refs": []
+    }
+  ],
+  "recommendations": [],
+  "patch_plan": {
+    "id": "patch_dependency_001",
+    "target_type": "dependency",
+    "target_refs": ["identity-api/example-auth"],
+    "diff_preview": { "before": "example-auth@1.4.2", "after": "example-auth@1.4.5" },
+    "risk_level": "medium_risk",
+    "requires_approval": true,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_dependency_bad",
+    "rollback_type": "unavailable",
+    "snapshot_refs": [],
+    "restore_steps": [],
+    "limitations": [],
+    "risk_level": "blocked",
+    "requires_manual_review": true
+  },
+  "safety_classification": "medium_risk",
+  "display_status": "Invalid rollback",
+  "user_message": "This payload is invalid because unavailable rollback plans require limitations.",
+  "next_actions": [],
+  "timeline_events": [],
+  "external_refs": [],
+  "knowledge_refs": [],
+  "created_at": "2026-05-21T08:15:00Z"
+}

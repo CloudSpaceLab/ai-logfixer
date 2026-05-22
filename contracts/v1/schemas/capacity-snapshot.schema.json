@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/capacity-snapshot.schema.json",
+  "title": "CapacitySnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "max_global_active_investigations",
+    "current_global_active_investigations",
+    "max_per_service_active_investigations",
+    "current_service_active_investigations",
+    "max_related_branches_per_cluster",
+    "current_related_branches",
+    "queue_limit",
+    "current_queue_depth"
+  ],
+  "properties": {
+    "max_global_active_investigations": { "type": "integer", "minimum": 0 },
+    "current_global_active_investigations": { "type": "integer", "minimum": 0 },
+    "max_per_service_active_investigations": { "type": "integer", "minimum": 0 },
+    "current_service_active_investigations": { "type": "integer", "minimum": 0 },
+    "max_related_branches_per_cluster": { "type": "integer", "minimum": 0 },
+    "current_related_branches": { "type": "integer", "minimum": 0 },
+    "queue_limit": { "type": "integer", "minimum": 0 },
+    "current_queue_depth": { "type": "integer", "minimum": 0 }
+  }
+}

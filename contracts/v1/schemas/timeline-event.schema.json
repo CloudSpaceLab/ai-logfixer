@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/timeline-event.schema.json",
+  "title": "TimelineEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "type", "message", "severity", "timestamp"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "message": { "type": "string", "minLength": 1 },
+    "severity": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" }
+  }
+}

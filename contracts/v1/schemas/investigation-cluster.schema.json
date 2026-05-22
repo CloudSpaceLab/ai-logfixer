@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-cluster.schema.json",
+  "title": "InvestigationCluster",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "status",
+    "primary_service",
+    "summary",
+    "active_branches",
+    "queued_branches",
+    "timeline_events",
+    "next_actions",
+    "external_refs",
+    "knowledge_refs",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["requested", "fingerprinted", "linked", "queued", "running", "needs_more_data", "completed", "failed", "rejected"]
+    },
+    "primary_service": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "active_branches": {
+      "type": "array",
+      "items": { "$ref": "investigation-branch.schema.json" }
+    },
+    "queued_branches": {
+      "type": "array",
+      "items": { "$ref": "investigation-branch.schema.json" }
+    },
+    "timeline_events": {
+      "type": "array",
+      "items": { "$ref": "timeline-event.schema.json" }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "next-action.schema.json" }
+    },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

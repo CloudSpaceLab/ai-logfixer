@@ -1,0 +1,21 @@
+{
+  "id": "rem_attempt_missing_approval_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-attempt.schema.json",
+  "remediation_plan_id": "rem_plan_route_policy_001",
+  "approval_request_id": "",
+  "status": "running",
+  "execution_started_at": "2026-05-21T08:10:00Z",
+  "execution_finished_at": null,
+  "monitor_summary": {
+    "status": "",
+    "message": "",
+    "signals": [],
+    "duration": ""
+  },
+  "rollback_attempt_id": "",
+  "display_status": "Running without approval",
+  "user_message": "This example is invalid because execution requires approval.",
+  "timeline_events": [],
+  "external_refs": []
+}

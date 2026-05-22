@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-branch.schema.json",
+  "title": "InvestigationBranch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "cluster_id",
+    "branch_type",
+    "symptom",
+    "status",
+    "source_request_ids",
+    "diagnosis_result_id",
+    "remediation_plan_id",
+    "display_status",
+    "user_message",
+    "timeline_events",
+    "knowledge_refs",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "cluster_id": { "type": "string", "minLength": 1 },
+    "branch_type": { "type": "string", "minLength": 1 },
+    "symptom": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["requested", "fingerprinted", "linked", "queued", "running", "needs_more_data", "completed", "failed", "rejected"]
+    },
+    "source_request_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "diagnosis_result_id": { "type": "string" },
+    "remediation_plan_id": { "type": "string" },
+    "display_status": { "type": "string", "minLength": 1 },
+    "user_message": { "type": "string", "minLength": 1 },
+    "timeline_events": {
+      "type": "array",
+      "items": { "$ref": "timeline-event.schema.json" }
+    },
+    "knowledge_refs": {
+      "type": "array",
+      "items": { "$ref": "knowledge-ref.schema.json" }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

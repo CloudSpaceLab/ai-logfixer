@@ -1,0 +1,29 @@
+{
+  "id": "rem_attempt_route_policy_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-attempt.schema.json",
+  "remediation_plan_id": "rem_plan_route_policy_001",
+  "approval_request_id": "approval_route_policy_001",
+  "status": "succeeded",
+  "execution_started_at": "2026-05-21T08:10:00Z",
+  "execution_finished_at": "2026-05-21T08:12:00Z",
+  "monitor_summary": {
+    "status": "passed",
+    "message": "503 rate returned to baseline after the route policy change.",
+    "signals": ["http_503_rate", "health_check", "latency_p95"],
+    "duration": "5m"
+  },
+  "rollback_attempt_id": "",
+  "display_status": "Fix worked",
+  "user_message": "The route policy fix was applied and monitoring shows the 503 rate returned to baseline.",
+  "timeline_events": [
+    {
+      "id": "tl_attempt_success_001",
+      "type": "remediation.succeeded",
+      "message": "Remediation succeeded after post-fix monitoring.",
+      "severity": "success",
+      "timestamp": "2026-05-21T08:17:00Z"
+    }
+  ],
+  "external_refs": []
+}

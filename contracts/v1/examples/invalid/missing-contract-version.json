@@ -1,0 +1,37 @@
+{
+  "id": "diag_missing_contract_version",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "This payload is missing contract_version.",
+  "confidence": 0.8,
+  "suspected_root_cause": "Missing required version field.",
+  "affected_services": ["checkout-api"],
+  "evidence_items": [],
+  "recommendations": [],
+  "patch_plan": {
+    "id": "patch_001",
+    "target_type": "config",
+    "target_refs": ["checkout-api.CONFIG"],
+    "diff_preview": { "before": "A", "after": "B" },
+    "risk_level": "low_risk",
+    "requires_approval": false,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_001",
+    "rollback_type": "restore_config",
+    "snapshot_refs": ["snapshot_001"],
+    "restore_steps": ["Restore previous config."],
+    "limitations": [],
+    "risk_level": "low_risk",
+    "requires_manual_review": false
+  },
+  "safety_classification": "low_risk",
+  "display_status": "Invalid payload",
+  "user_message": "This payload is missing contract_version.",
+  "next_actions": [],
+  "timeline_events": [],
+  "external_refs": [],
+  "knowledge_refs": [],
+  "created_at": "2026-05-21T08:12:00Z"
+}

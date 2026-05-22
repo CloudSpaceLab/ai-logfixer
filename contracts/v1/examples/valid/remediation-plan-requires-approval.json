@@ -1,0 +1,55 @@
+{
+  "id": "rem_plan_route_policy_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-plan.schema.json",
+  "diagnosis_result_id": "diag_web_500_failed_migration_001",
+  "summary": "Restore the previous upstream route policy for /api/orders.",
+  "fix_preview": {
+    "before": "route /api/orders -> upstream-orders-v42",
+    "after": "route /api/orders -> upstream-orders-v41"
+  },
+  "rollback_plan": {
+    "id": "rollback_route_policy_001",
+    "rollback_type": "restore_config",
+    "snapshot_refs": ["route_policy_snapshot_2026_05_21_080000"],
+    "restore_steps": ["Restore route /api/orders -> upstream-orders-v42."],
+    "limitations": ["Rollback may reintroduce the observed 503 responses."],
+    "risk_level": "medium_risk",
+    "requires_manual_review": true
+  },
+  "risk_level": "medium_risk",
+  "approval_required": true,
+  "status": "awaiting_approval",
+  "display_status": "Approval required",
+  "user_message": "I found a likely route policy fix. I need approval before applying it.",
+  "next_actions": [
+    {
+      "id": "next_approve",
+      "label": "Approve fix",
+      "action_type": "approve_remediation",
+      "description": "Approve the route policy remediation.",
+      "enabled": true
+    }
+  ],
+  "timeline_events": [
+    {
+      "id": "tl_plan_created_001",
+      "type": "remediation.plan_created",
+      "message": "Remediation plan created and waiting for approval.",
+      "severity": "info",
+      "timestamp": "2026-05-21T08:07:00Z"
+    }
+  ],
+  "external_refs": [],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "route_policy_orders_v41",
+      "node_type": "route_policy",
+      "relationship": "changes",
+      "confidence": 0.81,
+      "source": "remediation_planner"
+    }
+  ],
+  "created_at": "2026-05-21T08:07:00Z"
+}
