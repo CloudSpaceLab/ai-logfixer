@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/next-action.schema.json",
+  "title": "NextAction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "label", "action_type", "description", "enabled"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "label": { "type": "string", "minLength": 1 },
+    "action_type": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "enabled": { "type": "boolean" }
+  }
+}

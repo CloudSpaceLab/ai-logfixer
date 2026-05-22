@@ -48,7 +48,36 @@ func TestValidateDiagnosisResultRejectsUnsafeBusinessStates(t *testing.T) {
 	}
 }
 
+func TestValidateInvestigationDecisionRejectsMissingExplanation(t *testing.T) {
+	decision := loadJSON[InvestigationDecision](t, "../../../contracts/v1/examples/invalid/rejected-decision-without-explanation.json")
+
+	err := decision.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "rejected investigation decisions require explanation") {
+		t.Fatalf("expected rejected decision explanation error, got %q", err.Error())
+	}
+}
+
+func TestValidateRemediationAttemptRejectsMissingApproval(t *testing.T) {
+	attempt := loadJSON[RemediationAttempt](t, "../../../contracts/v1/examples/invalid/remediation-attempt-without-required-approval.json")
+
+	err := attempt.Validate()
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "remediation attempts cannot run without required approval") {
+		t.Fatalf("expected approval validation error, got %q", err.Error())
+	}
+}
+
 func loadDiagnosisResult(t *testing.T, path string) DiagnosisResult {
+	t.Helper()
+	return loadJSON[DiagnosisResult](t, path)
+}
+
+func loadJSON[T any](t *testing.T, path string) T {
 	t.Helper()
 
 	raw, err := os.ReadFile(filepath.Clean(path))
@@ -56,9 +85,9 @@ func loadDiagnosisResult(t *testing.T, path string) DiagnosisResult {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	var result DiagnosisResult
+	var result T
 	if err := json.Unmarshal(raw, &result); err != nil {
-		t.Fatalf("unmarshal diagnosis result: %v", err)
+		t.Fatalf("unmarshal fixture: %v", err)
 	}
 
 	return result

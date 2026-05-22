@@ -23,4 +23,6 @@ Required fields:
 
 Boundary rule:
 
-`DiagnosisResult` describes what was found. It must not imply that `ai-logfixer-ui` can execute production changes.
+`DiagnosisResult` describes what was found. It must not imply that any UI component can execute production changes directly.
+
+Composable React UI components should render `display_status`, `user_message`, `next_actions`, `timeline_events`, and `external_refs` from this contract.

@@ -1,0 +1,27 @@
+{
+  "id": "req_auto_go_api_503_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-request.schema.json",
+  "source_type": "automatic",
+  "source_name": "log-detector",
+  "requested_by": "ai-logfixer",
+  "service": "go-api",
+  "symptom": "Repeated 503 responses",
+  "error_code": "503",
+  "time_window": {
+    "start": "2026-05-21T08:00:00Z",
+    "end": "2026-05-21T08:05:00Z"
+  },
+  "signal_fingerprint": {
+    "service": "go-api",
+    "symptom": "availability_error_spike",
+    "error_code": "503",
+    "source": "application_logs",
+    "deploy_version": "v42",
+    "tags": ["http", "availability"]
+  },
+  "display_status": "Investigation started automatically",
+  "user_message": "I detected repeated 503 responses from go-api and started an investigation.",
+  "external_refs": [],
+  "created_at": "2026-05-21T08:05:10Z"
+}

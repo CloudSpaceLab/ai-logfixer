@@ -7,31 +7,39 @@
   "required": [
     "id",
     "diagnosis_id",
+    "remediation_plan_id",
+    "remediation_attempt_id",
     "action_taken",
     "actor",
     "approver",
     "timestamp",
     "before_state",
     "after_state",
-    "audit_refs",
-    "knowledge_tree_refs"
+    "outcome",
+    "summary",
+    "timeline_events",
+    "external_refs"
   ],
   "properties": {
     "id": { "type": "string", "minLength": 1 },
     "diagnosis_id": { "type": "string", "minLength": 1 },
+    "remediation_plan_id": { "type": "string", "minLength": 1 },
+    "remediation_attempt_id": { "type": "string", "minLength": 1 },
     "action_taken": { "type": "string", "minLength": 1 },
     "actor": { "type": "string", "minLength": 1 },
     "approver": { "type": "string" },
     "timestamp": { "type": "string", "format": "date-time" },
     "before_state": { "type": "string", "minLength": 1 },
     "after_state": { "type": "string", "minLength": 1 },
-    "audit_refs": {
+    "outcome": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "timeline_events": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "$ref": "timeline-event.schema.json" }
     },
-    "knowledge_tree_refs": {
+    "external_refs": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": { "$ref": "external-ref.schema.json" }
     }
   }
 }

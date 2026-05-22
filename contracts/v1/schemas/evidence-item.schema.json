@@ -13,7 +13,9 @@
     "summary",
     "raw_excerpt",
     "redaction_state",
-    "related_ids"
+    "related_ids",
+    "ui_hints",
+    "external_refs"
   ],
   "properties": {
     "id": { "type": "string", "minLength": 1 },
@@ -33,6 +35,11 @@
     "related_ids": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "ui_hints": { "$ref": "ui-hints.schema.json" },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
     }
   }
 }

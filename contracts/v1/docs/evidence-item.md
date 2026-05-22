@@ -22,6 +22,8 @@ Required fields:
 - `raw_excerpt`
 - `redaction_state`
 - `related_ids`
+- `ui_hints`
+- `external_refs`
 
 Safety note:
 

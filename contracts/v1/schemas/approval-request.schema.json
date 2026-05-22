@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/approval-request.schema.json",
+  "title": "ApprovalRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "remediation_plan_id",
+    "reason",
+    "risk_level",
+    "requested_by",
+    "status",
+    "approver",
+    "decided_at",
+    "user_message",
+    "next_actions",
+    "external_refs"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "remediation_plan_id": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "risk_level": {
+      "type": "string",
+      "enum": ["read_only", "low_risk", "medium_risk", "high_risk", "critical_risk", "blocked"]
+    },
+    "requested_by": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["pending", "approved", "denied", "expired"] },
+    "approver": { "type": "string" },
+    "decided_at": { "type": ["string", "null"], "format": "date-time" },
+    "user_message": { "type": "string", "minLength": 1 },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "next-action.schema.json" }
+    },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    }
+  }
+}

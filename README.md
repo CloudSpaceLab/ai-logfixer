@@ -1,6 +1,8 @@
 # ai-logfixer
 
-`ai-logfixer` provides contracts and future engine components for AI-assisted log diagnosis and typed remediation planning.
+`ai-logfixer` provides contracts and future engine components for standalone AI-assisted investigation, diagnosis, and guarded remediation.
+
+The product should also expose a modular, composable React UI so the native AI LogFixer app and external integrations can render the same investigation and remediation workflows from the public contracts.
 
 ## Phase 1 contracts
 

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-event.schema.json",
+  "title": "RemediationEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "remediation_attempt_id",
+    "event_type",
+    "message",
+    "severity",
+    "timestamp",
+    "ui_hints",
+    "external_refs"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "remediation_attempt_id": { "type": "string", "minLength": 1 },
+    "event_type": { "type": "string", "minLength": 1 },
+    "message": { "type": "string", "minLength": 1 },
+    "severity": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "ui_hints": { "$ref": "ui-hints.schema.json" },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    }
+  }
+}

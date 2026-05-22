@@ -15,4 +15,4 @@ Required fields:
 
 Boundary rule:
 
-Recommendations suggest actions. ControlOne decides whether the user may approve or execute them.
+Recommendations suggest actions. AI LogFixer decides whether the action needs approval, and external platforms may submit approval decisions only through supported APIs.

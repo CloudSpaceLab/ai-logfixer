@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-attempt.schema.json",
+  "title": "RemediationAttempt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "contract_version",
+    "schema_url",
+    "remediation_plan_id",
+    "approval_request_id",
+    "status",
+    "execution_started_at",
+    "execution_finished_at",
+    "monitor_summary",
+    "rollback_attempt_id",
+    "display_status",
+    "user_message",
+    "timeline_events",
+    "external_refs"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "contract_version": { "const": "v1" },
+    "schema_url": { "const": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-attempt.schema.json" },
+    "remediation_plan_id": { "type": "string", "minLength": 1 },
+    "approval_request_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "planning", "awaiting_approval", "approved", "denied", "running", "monitoring", "succeeded", "failed", "rolled_back", "escalated"]
+    },
+    "execution_started_at": { "type": ["string", "null"], "format": "date-time" },
+    "execution_finished_at": { "type": ["string", "null"], "format": "date-time" },
+    "monitor_summary": { "$ref": "monitor-summary.schema.json" },
+    "rollback_attempt_id": { "type": "string" },
+    "display_status": { "type": "string", "minLength": 1 },
+    "user_message": { "type": "string", "minLength": 1 },
+    "timeline_events": {
+      "type": "array",
+      "items": { "$ref": "timeline-event.schema.json" }
+    },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    }
+  }
+}

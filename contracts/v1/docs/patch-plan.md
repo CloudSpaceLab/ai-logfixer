@@ -22,4 +22,4 @@ Required fields:
 
 Boundary rule:
 
-`PatchPlan` is preview-only. ControlOne owns approval, execution, and audit.
+`PatchPlan` is preview-only. AI LogFixer owns approval checks, guarded execution, rollback handling, and receipts.

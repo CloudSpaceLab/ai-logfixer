@@ -2,6 +2,7 @@ package v1
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,23 +23,21 @@ func TestContractSchemasParse(t *testing.T) {
 }
 
 func TestValidExamplesPassSchemaGoValidationAndMarshalBackToSchema(t *testing.T) {
-	schema := compileDiagnosisSchema(t)
-
 	for _, examplePath := range examplePaths(t, "../../../contracts/v1/examples/valid/*.json") {
 		t.Run(filepath.Base(examplePath), func(t *testing.T) {
+			schema := compileSchemaForExample(t, examplePath)
 			var document any
 			decodeJSONFile(t, examplePath, &document)
 			if err := schema.Validate(document); err != nil {
 				t.Fatalf("valid example should pass schema validation: %v", err)
 			}
 
-			var result DiagnosisResult
-			decodeJSONFile(t, examplePath, &result)
-			if err := result.Validate(); err != nil {
+			contract := decodeContractForExample(t, examplePath)
+			if err := contract.Validate(); err != nil {
 				t.Fatalf("valid example should pass Go validation: %v", err)
 			}
 
-			encoded, err := json.Marshal(result)
+			encoded, err := json.Marshal(contract)
 			if err != nil {
 				t.Fatalf("marshal Go struct: %v", err)
 			}
@@ -55,19 +54,17 @@ func TestValidExamplesPassSchemaGoValidationAndMarshalBackToSchema(t *testing.T)
 }
 
 func TestInvalidExamplesFailSchemaOrGoValidation(t *testing.T) {
-	schema := compileDiagnosisSchema(t)
-
 	for _, examplePath := range examplePaths(t, "../../../contracts/v1/examples/invalid/*.json") {
 		t.Run(filepath.Base(examplePath), func(t *testing.T) {
+			schema := compileSchemaForExample(t, examplePath)
 			var document any
 			decodeJSONFile(t, examplePath, &document)
 			schemaErr := schema.Validate(document)
 
-			var result DiagnosisResult
-			decodeErr := decodeJSONFileErr(examplePath, &result)
+			contract, decodeErr := decodeContractForExampleErr(examplePath)
 			var goErr error
 			if decodeErr == nil {
-				goErr = result.Validate()
+				goErr = contract.Validate()
 			}
 
 			if schemaErr == nil && goErr == nil {
@@ -77,15 +74,73 @@ func TestInvalidExamplesFailSchemaOrGoValidation(t *testing.T) {
 	}
 }
 
-func compileDiagnosisSchema(t *testing.T) *jsonschema.Schema {
+func compileSchemaForExample(t *testing.T, path string) *jsonschema.Schema {
 	t.Helper()
 
-	compiler := newContractCompiler(t)
-	schema, err := compiler.Compile(schemaURL("../../../contracts/v1/schemas/diagnosis-result.schema.json"))
+	schemaURL, err := schemaURLForExample(path)
 	if err != nil {
-		t.Fatalf("compile diagnosis schema: %v", err)
+		t.Fatalf("read schema_url from example: %v", err)
+	}
+	compiler := newContractCompiler(t)
+	schema, err := compiler.Compile(schemaURL)
+	if err != nil {
+		t.Fatalf("compile schema %s: %v", schemaURL, err)
 	}
 	return schema
+}
+
+func schemaURLForExample(path string) (string, error) {
+	var envelope struct {
+		SchemaURL string `json:"schema_url"`
+	}
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return "", err
+	}
+	return envelope.SchemaURL, nil
+}
+
+type contract interface {
+	Validate() error
+}
+
+func decodeContractForExample(t *testing.T, path string) contract {
+	t.Helper()
+	contract, err := decodeContractForExampleErr(path)
+	if err != nil {
+		t.Fatalf("decode contract: %v", err)
+	}
+	return contract
+}
+
+func decodeContractForExampleErr(path string) (contract, error) {
+	schemaURL, err := schemaURLForExample(path)
+	if err != nil {
+		return nil, err
+	}
+
+	switch schemaURL {
+	case DiagnosisSchemaURL:
+		var value DiagnosisResult
+		return value, decodeJSONFileErr(path, &value)
+	case InvestigationRequestSchemaURL:
+		var value InvestigationRequest
+		return value, decodeJSONFileErr(path, &value)
+	case InvestigationDecisionSchemaURL:
+		var value InvestigationDecision
+		return value, decodeJSONFileErr(path, &value)
+	case RemediationPlanSchemaURL:
+		var value RemediationPlan
+		return value, decodeJSONFileErr(path, &value)
+	case RemediationAttemptSchemaURL:
+		var value RemediationAttempt
+		return value, decodeJSONFileErr(path, &value)
+	default:
+		return nil, fmt.Errorf("unsupported schema_url %s", schemaURL)
+	}
 }
 
 func newContractCompiler(t *testing.T) *jsonschema.Compiler {

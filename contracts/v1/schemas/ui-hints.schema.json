@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/ui-hints.schema.json",
+  "title": "UIHints",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["icon", "tone", "sections"],
+  "properties": {
+    "icon": { "type": "string" },
+    "tone": { "type": "string" },
+    "sections": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

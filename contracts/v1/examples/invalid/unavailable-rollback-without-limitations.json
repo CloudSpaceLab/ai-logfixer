@@ -17,7 +17,13 @@
       "summary": "Dependency version matches an advisory.",
       "raw_excerpt": "package=example-auth version=1.4.2 advisory=CVE-2026-0001",
       "redaction_state": "not_needed",
-      "related_ids": []
+      "related_ids": [],
+      "ui_hints": {
+        "icon": "shield-alert",
+        "tone": "danger",
+        "sections": ["cve"]
+      },
+      "external_refs": []
     }
   ],
   "recommendations": [],
@@ -40,5 +46,10 @@
     "requires_manual_review": true
   },
   "safety_classification": "medium_risk",
+  "display_status": "Invalid rollback",
+  "user_message": "This payload is invalid because unavailable rollback plans require limitations.",
+  "next_actions": [],
+  "timeline_events": [],
+  "external_refs": [],
   "created_at": "2026-05-21T08:15:00Z"
 }

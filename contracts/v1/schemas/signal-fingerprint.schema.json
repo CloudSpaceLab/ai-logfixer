@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/signal-fingerprint.schema.json",
+  "title": "SignalFingerprint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["service", "symptom", "error_code", "source", "deploy_version", "tags"],
+  "properties": {
+    "service": { "type": "string", "minLength": 1 },
+    "symptom": { "type": "string", "minLength": 1 },
+    "error_code": { "type": "string" },
+    "source": { "type": "string", "minLength": 1 },
+    "deploy_version": { "type": "string" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

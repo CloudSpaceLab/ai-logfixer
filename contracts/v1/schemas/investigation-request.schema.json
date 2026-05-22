@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-request.schema.json",
+  "title": "InvestigationRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "contract_version",
+    "schema_url",
+    "source_type",
+    "source_name",
+    "requested_by",
+    "service",
+    "symptom",
+    "error_code",
+    "time_window",
+    "signal_fingerprint",
+    "display_status",
+    "user_message",
+    "external_refs",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "contract_version": { "const": "v1" },
+    "schema_url": { "const": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-request.schema.json" },
+    "source_type": { "type": "string", "enum": ["automatic", "manual", "integration"] },
+    "source_name": { "type": "string", "minLength": 1 },
+    "requested_by": { "type": "string" },
+    "service": { "type": "string", "minLength": 1 },
+    "symptom": { "type": "string", "minLength": 1 },
+    "error_code": { "type": "string" },
+    "time_window": { "$ref": "time-window.schema.json" },
+    "signal_fingerprint": { "$ref": "signal-fingerprint.schema.json" },
+    "display_status": { "type": "string", "minLength": 1 },
+    "user_message": { "type": "string", "minLength": 1 },
+    "external_refs": {
+      "type": "array",
+      "items": { "$ref": "external-ref.schema.json" }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

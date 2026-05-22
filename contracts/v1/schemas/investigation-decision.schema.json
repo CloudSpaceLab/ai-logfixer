@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-decision.schema.json",
+  "title": "InvestigationDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "contract_version",
+    "schema_url",
+    "request_id",
+    "decision",
+    "explanation",
+    "user_message",
+    "cluster_id",
+    "branch_id",
+    "capacity_snapshot",
+    "next_actions",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "contract_version": { "const": "v1" },
+    "schema_url": { "const": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-decision.schema.json" },
+    "request_id": { "type": "string", "minLength": 1 },
+    "decision": {
+      "type": "string",
+      "enum": ["start_new", "attach_duplicate", "link_related", "queue", "reject"]
+    },
+    "explanation": { "type": "string" },
+    "user_message": { "type": "string" },
+    "cluster_id": { "type": "string" },
+    "branch_id": { "type": "string" },
+    "capacity_snapshot": { "$ref": "capacity-snapshot.schema.json" },
+    "next_actions": {
+      "type": "array",
+      "items": { "$ref": "next-action.schema.json" }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
