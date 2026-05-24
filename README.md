@@ -93,3 +93,66 @@ Expected result:
 ```text
 200
 ```
+
+## Laravel production error-page runner
+
+`cmd/ai-logfixer-laravel` handles a Laravel failure mode where production renders the friendly error page even when the load balancer/browser flow reports `200`. It does not rely on status codes alone. It:
+
+- probes the URL body for Laravel production error-page signatures such as `Sorry.` / `Go Back`
+- reads the latest `storage/logs/laravel*.log` or a supplied `-log`
+- classifies common Laravel/PHP/database failures including missing classes, undefined methods, missing views, missing routes, failed container bindings, missing tables/columns, permission failures, syntax errors, and undefined variables/keys/properties
+- scans the target directory for PSR-4 `App\...` references whose expected files are missing
+- auto-remediates eligible missing `App\...` classes by generating a conservative compatibility stub from observed PHP/Blade usage, writing a rollback marker, linting with `php -l` when PHP is available, and re-probing the URL
+- refuses unsafe automatic patches and returns a blocked/escalated remediation result with evidence when the issue requires a real migration, config change, dependency fix, source edit, or manual review
+- can delegate unsupported issues to an external coding agent such as `opencode`, in a staging copy, then validate, apply, verify, and record rollback metadata
+
+Example against a deployed Laravel target:
+
+```bash
+ai-logfixer-laravel \
+  -target /var/www/fraudv \
+  -service fraudv \
+  -url http://192.168.61.34/transactions/3478538 \
+  -log /var/www/fraudv/storage/logs/laravel-2026-05-24.log \
+  -apply=true
+```
+
+If the page requires an authenticated session, pass the cookie/header from the failing browser request:
+
+```bash
+ai-logfixer-laravel \
+  -target /var/www/fraudv \
+  -service fraudv \
+  -url http://192.168.61.34/transactions/3478538 \
+  -header 'Cookie: fraudsniper_session=...' \
+  -apply=true
+```
+
+For this incident class, avoid `-http-status-only=true`; the whole point is that Laravel may return a friendly error page through infrastructure that appears healthy.
+
+The Laravel runner is intentionally not an "auto-fix everything" tool. It can catch broad Laravel failure signals and produce contract-valid diagnosis output for unknown or unsupported errors, but it only writes changes for low-risk missing-class compatibility stubs that can be inferred from local usage.
+
+### External agent remediation
+
+For more complex errors, enable the guarded external-agent path:
+
+```bash
+ai-logfixer-laravel \
+  -target /var/www/fraudv \
+  -service fraudv \
+  -url http://192.168.61.34/transactions/3478538 \
+  -log /var/www/fraudv/storage/logs/laravel-2026-05-24.log \
+  -external-agent=true \
+  -agent-model "anthropic/claude-sonnet-4" \
+  -validate "php artisan test --no-interaction" \
+  -apply=true
+```
+
+The external agent receives a structured evidence prompt and edits only a staging copy. By default, AI LogFixer runs `opencode run --file {prompt_file}`; pass `-agent-command` to use another opencode invocation or compatible CLI. AI LogFixer diffs the staging copy against the target, runs automatic PHP lint when PHP is available, runs every `-validate` command, applies the patch only after validation passes, re-probes the failing URL, and writes a rollback manifest under `.ai-logfixer-backups`.
+
+Rollback uses the recorded manifest:
+
+```bash
+ai-logfixer-rollback \
+  -manifest /var/www/fraudv/.ai-logfixer-backups/external-20260524T084500Z/rollback-manifest.json
+```

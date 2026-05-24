@@ -3,6 +3,7 @@ package v1
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,7 +194,11 @@ func schemaURL(path string) string {
 	if err != nil {
 		panic(err)
 	}
-	return "file://" + filepath.ToSlash(abs)
+	slashPath := filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" && !strings.HasPrefix(slashPath, "/") {
+		slashPath = "/" + slashPath
+	}
+	return (&url.URL{Scheme: "file", Path: slashPath}).String()
 }
 
 func decodeJSONFile(t *testing.T, path string, target any) {
