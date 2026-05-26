@@ -119,6 +119,43 @@ func TestCreateDiagnosisRequiresBranchRelationBeforeSQL(t *testing.T) {
 	}
 }
 
+func TestCreateSignalEventRequiresIdempotencyKeyBeforeSQL(t *testing.T) {
+	t.Parallel()
+
+	q := &recordingQueryer{rowsAffected: 1}
+	repo := signalEventRepo{q: q}
+	_, err := repo.Create(context.Background(), store.SignalEvent{
+		TenantID:      "tenant-1",
+		EnvironmentID: "env-1",
+		ServiceID:     "service-1",
+		Source:        "access.log",
+	})
+	if err == nil {
+		t.Fatal("expected missing idempotency key error")
+	}
+	if q.execCount != 0 {
+		t.Fatalf("expected no SQL execution when idempotency key is missing, got %d calls", q.execCount)
+	}
+}
+
+func TestUpsertSignalFingerprintRequiresHashBeforeSQL(t *testing.T) {
+	t.Parallel()
+
+	q := &recordingQueryer{rowsAffected: 1}
+	repo := signalFingerprintRepo{q: q}
+	_, err := repo.Upsert(context.Background(), store.SignalFingerprint{
+		TenantID:      "tenant-1",
+		EnvironmentID: "env-1",
+		ServiceID:     "service-1",
+	})
+	if err == nil {
+		t.Fatal("expected missing fingerprint hash error")
+	}
+	if q.execCount != 0 {
+		t.Fatalf("expected no SQL execution when fingerprint hash is missing, got %d calls", q.execCount)
+	}
+}
+
 type recordingQueryer struct {
 	query        string
 	args         []any

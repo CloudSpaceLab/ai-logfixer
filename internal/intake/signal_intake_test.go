@@ -57,6 +57,12 @@ func TestStartNewInvestigationPersistsDurableIntakeRecords(t *testing.T) {
 	if len(fake.tx.requests.records) != 1 {
 		t.Fatalf("expected one request record, got %d", len(fake.tx.requests.records))
 	}
+	if len(fake.tx.signalEvents.records) != 1 {
+		t.Fatalf("expected one signal event, got %d", len(fake.tx.signalEvents.records))
+	}
+	if len(fake.tx.signalFingerprints.records) != 1 {
+		t.Fatalf("expected one signal fingerprint, got %d", len(fake.tx.signalFingerprints.records))
+	}
 	if len(fake.tx.clusters.records) != 1 {
 		t.Fatalf("expected one cluster record, got %d", len(fake.tx.clusters.records))
 	}
@@ -73,6 +79,17 @@ func TestStartNewInvestigationPersistsDurableIntakeRecords(t *testing.T) {
 	}
 	if requestRecord.IdempotencyKey != result.InvestigationRequest.ID {
 		t.Fatalf("expected request idempotency key to default to request id, got %s", requestRecord.IdempotencyKey)
+	}
+	signalEvent := fake.tx.signalEvents.records[0]
+	if signalEvent.FingerprintHash == "" || signalEvent.IdempotencyKey == "" {
+		t.Fatalf("expected signal event fingerprint/idempotency, got %+v", signalEvent)
+	}
+	fingerprint := fake.tx.signalFingerprints.records[0]
+	if fingerprint.FingerprintHash != signalEvent.FingerprintHash || fingerprint.SampleEventID != signalEvent.ID {
+		t.Fatalf("fingerprint not linked to signal event: event=%+v fingerprint=%+v", signalEvent, fingerprint)
+	}
+	if fingerprint.OccurrenceCount != 4 {
+		t.Fatalf("expected occurrence count 4, got %d", fingerprint.OccurrenceCount)
 	}
 	if got, want := result.InvestigationRequest.SignalFingerprint.DeployVersion, "v42"; got != want {
 		t.Fatalf("unexpected deploy version: got %s want %s", got, want)
@@ -186,6 +203,31 @@ func TestStartNewInvestigationUsesStableContractIDs(t *testing.T) {
 	}
 }
 
+func TestSignalFingerprintIgnoresCorrelationID(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
+	firstStore := newFakeStore()
+	first := NewService(firstStore)
+	first.SetClock(func() time.Time { return now })
+	if _, err := first.StartNewInvestigation(context.Background(), validStartInput("corr-one", true)); err != nil {
+		t.Fatalf("first intake failed: %v", err)
+	}
+
+	secondStore := newFakeStore()
+	second := NewService(secondStore)
+	second.SetClock(func() time.Time { return now })
+	if _, err := second.StartNewInvestigation(context.Background(), validStartInput("corr-two", true)); err != nil {
+		t.Fatalf("second intake failed: %v", err)
+	}
+
+	firstHash := firstStore.tx.signalEvents.records[0].FingerprintHash
+	secondHash := secondStore.tx.signalEvents.records[0].FingerprintHash
+	if firstHash != secondHash {
+		t.Fatalf("fingerprint hash should ignore correlation id: got %s and %s", firstHash, secondHash)
+	}
+}
+
 func validStartInput(correlationID string, suppressOutbox bool) StartInput {
 	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	return StartInput{
@@ -230,12 +272,22 @@ func (s *fakeStore) WithinTx(ctx context.Context, fn func(context.Context, store
 }
 
 type fakeTx struct {
-	requests  fakeRequestRepo
-	clusters  fakeClusterRepo
-	branches  fakeBranchRepo
-	decisions fakeDecisionRepo
-	audit     fakeAuditRepo
-	outbox    fakeOutboxRepo
+	signalEvents       fakeSignalEventRepo
+	signalFingerprints fakeSignalFingerprintRepo
+	requests           fakeRequestRepo
+	clusters           fakeClusterRepo
+	branches           fakeBranchRepo
+	decisions          fakeDecisionRepo
+	audit              fakeAuditRepo
+	outbox             fakeOutboxRepo
+}
+
+func (t *fakeTx) SignalEvents() store.SignalEventRepository {
+	return &t.signalEvents
+}
+
+func (t *fakeTx) SignalFingerprints() store.SignalFingerprintRepository {
+	return &t.signalFingerprints
 }
 
 func (t *fakeTx) InvestigationRequests() store.InvestigationRequestRepository {
@@ -284,6 +336,38 @@ func (t *fakeTx) WorkflowLeases() store.WorkflowLeaseRepository {
 
 func (t *fakeTx) OutboxEvents() store.OutboxEventRepository {
 	return &t.outbox
+}
+
+type fakeSignalEventRepo struct {
+	records []store.SignalEvent
+}
+
+func (r *fakeSignalEventRepo) Create(_ context.Context, event store.SignalEvent) (store.SignalEvent, error) {
+	if event.ID == "" {
+		event.ID = "signal-event-1"
+	}
+	r.records = append(r.records, event)
+	return event, nil
+}
+
+func (r *fakeSignalEventRepo) Get(context.Context, string, string) (store.SignalEvent, error) {
+	return store.SignalEvent{}, errors.New("unexpected Get call")
+}
+
+type fakeSignalFingerprintRepo struct {
+	records []store.SignalFingerprint
+}
+
+func (r *fakeSignalFingerprintRepo) Upsert(_ context.Context, fingerprint store.SignalFingerprint) (store.SignalFingerprint, error) {
+	if fingerprint.ID == "" {
+		fingerprint.ID = "signal-fingerprint-1"
+	}
+	r.records = append(r.records, fingerprint)
+	return fingerprint, nil
+}
+
+func (r *fakeSignalFingerprintRepo) GetByHash(context.Context, string, string, string) (store.SignalFingerprint, error) {
+	return store.SignalFingerprint{}, errors.New("unexpected GetByHash call")
 }
 
 type fakeRequestRepo struct {

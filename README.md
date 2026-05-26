@@ -76,11 +76,11 @@ The current repo is intentionally contract-first. Runtime work should now conver
 - [Phase 1 progress and architecture review](docs/reviews/phase-1-progress-and-architecture-review.md) maps the current codebase, open issues, PRs, biggest gaps, and recommended next step.
 - [Live scenario validation](docs/reviews/live-scenario-validation-2026-05-26.md) records real local Runtime V2/Goravel runs and evaluates public log/error corpora for future fixtures.
 - `internal/domain` centralizes allowed investigation, remediation, and approval state transitions.
-- `internal/store` defines the durable repository, lease, audit, and outbox boundary that future API/worker implementations should use.
+- `internal/store` defines the durable signal, workflow, lease, audit, and outbox boundary that future API/worker implementations should use.
 - `internal/store/postgres` is the first concrete SQL implementation for transaction-scoped contract records, optimistic status updates, workflow leases, audit events, and outbox delivery.
 - `internal/workflow` is the first service layer over the store: it owns status transitions and writes audit/outbox records in the same transaction.
 - `internal/engine` contains shared incident-signal grouping, dynamic contract ID generation, and blocked/escalated remediation helpers.
-- `internal/intake` turns normalized incident signals into durable investigation request, cluster, branch, and decision records with audit/outbox events.
+- `internal/intake` turns normalized incident signals into durable signal event, fingerprint, investigation request, cluster, branch, and decision records with audit/outbox events.
 - `internal/runtime/v2` is the Runtime V2 conservative JSON-config remediation path: the demo app still uses `/orders` and `upstream_url`, but the reusable runner can match other routes/statuses, patch an explicit JSON key path, verify an explicit URL, and escalate safely when no allowlisted patch descriptor exists. It can also call `internal/workflow` when a workflow service is supplied.
 - `internal/truth` defines the Runtime V2 truth-recovery layer: stack trace resolution, suppression-site detection, staged reveal planning, redaction, and scoped fix-bundle creation for explicit opencode handoff.
 - `db/migrations/postgres/0001_workflow_store.sql` is the first reference PostgreSQL schema for the durable workflow store.

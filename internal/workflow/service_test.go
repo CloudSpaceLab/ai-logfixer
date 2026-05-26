@@ -152,6 +152,14 @@ type fakeTx struct {
 	outbox                fakeOutboxRepo
 }
 
+func (t *fakeTx) SignalEvents() store.SignalEventRepository {
+	return nil
+}
+
+func (t *fakeTx) SignalFingerprints() store.SignalFingerprintRepository {
+	return nil
+}
+
 func (t *fakeTx) InvestigationRequests() store.InvestigationRequestRepository {
 	return nil
 }

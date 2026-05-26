@@ -17,6 +17,8 @@ import (
 )
 
 const (
+	ResourceSignalEvent           = "signal_event"
+	ResourceSignalFingerprint     = "signal_fingerprint"
 	ResourceInvestigationRequest  = "investigation_request"
 	ResourceInvestigationCluster  = "investigation_cluster"
 	ResourceInvestigationBranch   = "investigation_branch"
@@ -89,6 +91,13 @@ func (s *Service) StartNewInvestigation(ctx context.Context, input StartInput) (
 	}
 
 	err = s.store.WithinTx(ctx, func(ctx context.Context, tx store.Tx) error {
+		signalEvent, err := tx.SignalEvents().Create(ctx, buildSignalEvent(input, result, now))
+		if err != nil {
+			return fmt.Errorf("create signal event: %w", err)
+		}
+		if _, err := tx.SignalFingerprints().Upsert(ctx, buildSignalFingerprint(input, result, signalEvent, now)); err != nil {
+			return fmt.Errorf("upsert signal fingerprint: %w", err)
+		}
 		if err := tx.InvestigationRequests().Create(ctx, store.ContractRecord[contractsv1.InvestigationRequest]{
 			ID:              result.InvestigationRequest.ID,
 			TenantID:        input.TenantID,
@@ -416,6 +425,55 @@ func validateBranch(branch contractsv1.InvestigationBranch) error {
 	return errors.Join(errs...)
 }
 
+func buildSignalEvent(input StartInput, result StartResult, now time.Time) store.SignalEvent {
+	payload, _ := json.Marshal(result.Signal)
+	return store.SignalEvent{
+		TenantID:        input.TenantID,
+		EnvironmentID:   input.EnvironmentID,
+		ServiceID:       input.ServiceID,
+		Source:          result.Signal.Source,
+		Severity:        signalSeverity(result.Signal),
+		Route:           result.Signal.Route,
+		Method:          result.Signal.Method,
+		StatusCode:      result.Signal.StatusCode,
+		ErrorClass:      result.Signal.ErrorCode(),
+		FingerprintHash: fingerprintHash(input),
+		IdempotencyKey:  "signal-event:" + result.InvestigationRequest.ID,
+		ObservedAt:      result.Signal.End,
+		ReceivedAt:      now,
+		PayloadJSON:     payload,
+	}
+}
+
+func buildSignalFingerprint(input StartInput, result StartResult, event store.SignalEvent, now time.Time) store.SignalFingerprint {
+	metadata, _ := json.Marshal(map[string]any{
+		"kind":           result.Signal.Kind,
+		"method":         result.Signal.Method,
+		"route":          result.Signal.Route,
+		"error_code":     result.Signal.ErrorCode(),
+		"status_class":   result.Signal.StatusClass,
+		"signature":      result.Signal.Signature,
+		"request_id":     result.InvestigationRequest.ID,
+		"cluster_id":     result.Cluster.ID,
+		"branch_id":      result.Branch.ID,
+		"correlation_id": input.CorrelationID,
+	})
+	return store.SignalFingerprint{
+		TenantID:        input.TenantID,
+		EnvironmentID:   input.EnvironmentID,
+		ServiceID:       input.ServiceID,
+		FingerprintHash: fingerprintHash(input),
+		Status:          "open",
+		FirstSeenAt:     result.Signal.Start,
+		LastSeenAt:      result.Signal.End,
+		OccurrenceCount: int64(result.Signal.Count),
+		SampleEventID:   event.ID,
+		MetadataJSON:    metadata,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+}
+
 func appendAudit(ctx context.Context, tx store.Tx, input StartInput, result StartResult, now time.Time) error {
 	metadata, err := json.Marshal(map[string]string{
 		"request_id":     result.InvestigationRequest.ID,
@@ -492,6 +550,19 @@ func stableParts(input StartInput) []string {
 	return parts
 }
 
+func fingerprintHash(input StartInput) string {
+	return engine.StableID("sig", fingerprintParts(input)...)
+}
+
+func fingerprintParts(input StartInput) []string {
+	return append([]string{
+		input.TenantID,
+		input.EnvironmentID,
+		input.ServiceID,
+		input.ServiceName,
+	}, input.Signal.StableParts()...)
+}
+
 func signalSymptom(signal engine.IncidentSignal) string {
 	if signal.Kind == "http_failure" {
 		code := signal.ErrorCode()
@@ -508,6 +579,19 @@ func signalSymptom(signal engine.IncidentSignal) string {
 		return "Repeated " + strings.ReplaceAll(signal.Kind, "_", " ") + " signal"
 	}
 	return "Repeated incident signal"
+}
+
+func signalSeverity(signal engine.IncidentSignal) string {
+	if signal.StatusCode >= 500 || signal.StatusClass >= 500 {
+		return "error"
+	}
+	if signal.StatusCode >= 400 || signal.StatusClass >= 400 {
+		return "warning"
+	}
+	if signal.Signature != "" || signal.Code != "" {
+		return "error"
+	}
+	return "info"
 }
 
 func branchType(signal engine.IncidentSignal) string {

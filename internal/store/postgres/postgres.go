@@ -56,6 +56,14 @@ type workflowTx struct {
 	q queryer
 }
 
+func (t *workflowTx) SignalEvents() store.SignalEventRepository {
+	return signalEventRepo{q: t.q}
+}
+
+func (t *workflowTx) SignalFingerprints() store.SignalFingerprintRepository {
+	return signalFingerprintRepo{q: t.q}
+}
+
 func (t *workflowTx) InvestigationRequests() store.InvestigationRequestRepository {
 	return investigationRequestRepo{q: t.q}
 }
@@ -106,6 +114,149 @@ func (t *workflowTx) OutboxEvents() store.OutboxEventRepository {
 
 type investigationRequestRepo struct {
 	q queryer
+}
+
+type signalEventRepo struct {
+	q queryer
+}
+
+func (r signalEventRepo) Create(ctx context.Context, event store.SignalEvent) (store.SignalEvent, error) {
+	if err := require("signal event tenant id", event.TenantID); err != nil {
+		return store.SignalEvent{}, err
+	}
+	if err := require("signal event environment id", event.EnvironmentID); err != nil {
+		return store.SignalEvent{}, err
+	}
+	if err := require("signal event service id", event.ServiceID); err != nil {
+		return store.SignalEvent{}, err
+	}
+	if err := require("signal event source", event.Source); err != nil {
+		return store.SignalEvent{}, err
+	}
+	if err := require("signal event idempotency key", event.IdempotencyKey); err != nil {
+		return store.SignalEvent{}, err
+	}
+	observedAt := firstTime(event.ObservedAt, time.Now())
+	receivedAt := firstTime(event.ReceivedAt, observedAt)
+	row := r.q.QueryRowContext(ctx, `
+INSERT INTO signal_events (
+    id, tenant_id, environment_id, service_id, source, severity, route, method,
+    status_code, error_class, fingerprint_hash, idempotency_key, observed_at,
+    received_at, payload_json
+) VALUES (
+    COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8,
+    $9, $10, $11, $12, $13, $14, $15
+)
+ON CONFLICT (tenant_id, idempotency_key)
+DO UPDATE SET received_at = EXCLUDED.received_at
+RETURNING id::text, tenant_id::text, environment_id::text, service_id::text,
+          source, COALESCE(severity, ''), COALESCE(route, ''), COALESCE(method, ''),
+          COALESCE(status_code, 0), COALESCE(error_class, ''),
+          COALESCE(fingerprint_hash, ''), idempotency_key, observed_at, received_at,
+          payload_json`,
+		event.ID,
+		event.TenantID,
+		event.EnvironmentID,
+		event.ServiceID,
+		event.Source,
+		nullString(event.Severity),
+		nullString(event.Route),
+		nullString(event.Method),
+		nullInt(event.StatusCode),
+		nullString(event.ErrorClass),
+		nullString(event.FingerprintHash),
+		event.IdempotencyKey,
+		observedAt,
+		receivedAt,
+		jsonString(event.PayloadJSON),
+	)
+	return scanSignalEvent(row)
+}
+
+func (r signalEventRepo) Get(ctx context.Context, tenantID string, id string) (store.SignalEvent, error) {
+	row := r.q.QueryRowContext(ctx, `
+SELECT id::text, tenant_id::text, environment_id::text, service_id::text,
+       source, COALESCE(severity, ''), COALESCE(route, ''), COALESCE(method, ''),
+       COALESCE(status_code, 0), COALESCE(error_class, ''),
+       COALESCE(fingerprint_hash, ''), idempotency_key, observed_at, received_at,
+       payload_json
+FROM signal_events
+WHERE tenant_id = $1 AND id = $2`, tenantID, id)
+	return scanSignalEvent(row)
+}
+
+type signalFingerprintRepo struct {
+	q queryer
+}
+
+func (r signalFingerprintRepo) Upsert(ctx context.Context, fingerprint store.SignalFingerprint) (store.SignalFingerprint, error) {
+	if err := require("signal fingerprint tenant id", fingerprint.TenantID); err != nil {
+		return store.SignalFingerprint{}, err
+	}
+	if err := require("signal fingerprint environment id", fingerprint.EnvironmentID); err != nil {
+		return store.SignalFingerprint{}, err
+	}
+	if err := require("signal fingerprint service id", fingerprint.ServiceID); err != nil {
+		return store.SignalFingerprint{}, err
+	}
+	if err := require("signal fingerprint hash", fingerprint.FingerprintHash); err != nil {
+		return store.SignalFingerprint{}, err
+	}
+	status := firstNonEmpty(fingerprint.Status, "open")
+	firstSeenAt := firstTime(fingerprint.FirstSeenAt, time.Now())
+	lastSeenAt := firstTime(fingerprint.LastSeenAt, firstSeenAt)
+	if lastSeenAt.Before(firstSeenAt) {
+		lastSeenAt = firstSeenAt
+	}
+	occurrenceCount := fingerprint.OccurrenceCount
+	if occurrenceCount == 0 {
+		occurrenceCount = 1
+	}
+	row := r.q.QueryRowContext(ctx, `
+INSERT INTO signal_fingerprints (
+    id, tenant_id, environment_id, service_id, fingerprint_hash, status,
+    first_seen_at, last_seen_at, occurrence_count, sample_event_id,
+    metadata_json, created_at, updated_at
+) VALUES (
+    COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, $5, $6,
+    $7, $8, $9, NULLIF($10, '')::uuid, $11, $12, $12
+)
+ON CONFLICT (tenant_id, service_id, fingerprint_hash)
+DO UPDATE SET
+    status = EXCLUDED.status,
+    first_seen_at = LEAST(signal_fingerprints.first_seen_at, EXCLUDED.first_seen_at),
+    last_seen_at = GREATEST(signal_fingerprints.last_seen_at, EXCLUDED.last_seen_at),
+    occurrence_count = signal_fingerprints.occurrence_count + EXCLUDED.occurrence_count,
+    sample_event_id = COALESCE(EXCLUDED.sample_event_id, signal_fingerprints.sample_event_id),
+    metadata_json = signal_fingerprints.metadata_json || EXCLUDED.metadata_json,
+    updated_at = EXCLUDED.updated_at
+RETURNING id::text, tenant_id::text, environment_id::text, service_id::text,
+          fingerprint_hash, status, first_seen_at, last_seen_at, occurrence_count,
+          COALESCE(sample_event_id::text, ''), metadata_json, created_at, updated_at`,
+		fingerprint.ID,
+		fingerprint.TenantID,
+		fingerprint.EnvironmentID,
+		fingerprint.ServiceID,
+		fingerprint.FingerprintHash,
+		status,
+		firstSeenAt,
+		lastSeenAt,
+		occurrenceCount,
+		fingerprint.SampleEventID,
+		jsonString(fingerprint.MetadataJSON),
+		firstTime(fingerprint.UpdatedAt, fingerprint.CreatedAt, time.Now()),
+	)
+	return scanSignalFingerprint(row)
+}
+
+func (r signalFingerprintRepo) GetByHash(ctx context.Context, tenantID string, serviceID string, fingerprintHash string) (store.SignalFingerprint, error) {
+	row := r.q.QueryRowContext(ctx, `
+SELECT id::text, tenant_id::text, environment_id::text, service_id::text,
+       fingerprint_hash, status, first_seen_at, last_seen_at, occurrence_count,
+       COALESCE(sample_event_id::text, ''), metadata_json, created_at, updated_at
+FROM signal_fingerprints
+WHERE tenant_id = $1 AND service_id = $2 AND fingerprint_hash = $3`, tenantID, serviceID, fingerprintHash)
+	return scanSignalFingerprint(row)
 }
 
 func (r investigationRequestRepo) Create(ctx context.Context, record store.ContractRecord[contractsv1.InvestigationRequest]) error {
@@ -850,6 +1001,64 @@ func requireRowsAffected(result sql.Result) error {
 	return nil
 }
 
+func scanSignalEvent(row rowScanner) (store.SignalEvent, error) {
+	var event store.SignalEvent
+	var raw []byte
+	err := row.Scan(
+		&event.ID,
+		&event.TenantID,
+		&event.EnvironmentID,
+		&event.ServiceID,
+		&event.Source,
+		&event.Severity,
+		&event.Route,
+		&event.Method,
+		&event.StatusCode,
+		&event.ErrorClass,
+		&event.FingerprintHash,
+		&event.IdempotencyKey,
+		&event.ObservedAt,
+		&event.ReceivedAt,
+		&raw,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return event, store.ErrNotFound
+	}
+	if err != nil {
+		return event, fmt.Errorf("scan signal event: %w", err)
+	}
+	event.PayloadJSON = append(event.PayloadJSON[:0], raw...)
+	return event, nil
+}
+
+func scanSignalFingerprint(row rowScanner) (store.SignalFingerprint, error) {
+	var fingerprint store.SignalFingerprint
+	var raw []byte
+	err := row.Scan(
+		&fingerprint.ID,
+		&fingerprint.TenantID,
+		&fingerprint.EnvironmentID,
+		&fingerprint.ServiceID,
+		&fingerprint.FingerprintHash,
+		&fingerprint.Status,
+		&fingerprint.FirstSeenAt,
+		&fingerprint.LastSeenAt,
+		&fingerprint.OccurrenceCount,
+		&fingerprint.SampleEventID,
+		&raw,
+		&fingerprint.CreatedAt,
+		&fingerprint.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fingerprint, store.ErrNotFound
+	}
+	if err != nil {
+		return fingerprint, fmt.Errorf("scan signal fingerprint: %w", err)
+	}
+	fingerprint.MetadataJSON = append(fingerprint.MetadataJSON[:0], raw...)
+	return fingerprint, nil
+}
+
 func scanLease(row *sql.Row, emptyErr error) (store.WorkflowLease, error) {
 	var lease store.WorkflowLease
 	err := row.Scan(&lease.ResourceType, &lease.ResourceID, &lease.OwnerID, &lease.FencingToken, &lease.ExpiresAt)
@@ -923,6 +1132,13 @@ func firstTime(values ...time.Time) time.Time {
 
 func nullString(value string) any {
 	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullInt(value int) any {
+	if value == 0 {
 		return nil
 	}
 	return value
