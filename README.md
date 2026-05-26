@@ -44,6 +44,8 @@ The GitHub Actions workflow runs the normal Go suite and a PostgreSQL-backed int
 The current repo is intentionally contract-first. Runtime work should now converge on a durable workflow architecture instead of growing as separate CLI-only flows.
 
 - [Durable workflow architecture](docs/architecture/durable-workflow-architecture.md) describes the target system of record, workflow state machine, framework adapter boundary, remediation runtime, and DB shape.
+- [Runtime safety policy](docs/architecture/safety-policy.md) defines remediation risk classes, redaction, approval, rollback, status, versioning, and capacity rules.
+- [External integration boundaries](docs/architecture/external-integration-boundaries.md) defines API, webhook, `external_refs`, approval, and embedded UI ownership rules for external platforms.
 - [Runtime V2 truth recovery](docs/v2/runtime-truth-recovery.md) describes the active runtime architecture for recovering real errors, detecting suppression sites, redacting evidence, and preparing guarded fix bundles.
 - [Phase 1 progress and architecture review](docs/reviews/phase-1-progress-and-architecture-review.md) maps the current codebase, open issues, PRs, biggest gaps, and recommended next step.
 - [Live scenario validation](docs/reviews/live-scenario-validation-2026-05-26.md) records real local Runtime V2/Goravel runs and evaluates public log/error corpora for future fixtures.

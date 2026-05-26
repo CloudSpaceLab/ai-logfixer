@@ -6,23 +6,22 @@ This review reconstructs the current AI LogFixer architecture from the codebase,
 
 ## Current GitHub State
 
-Open PRs:
+Merged follow-up:
 
 | PR | State | Mergeability | Role |
 | --- | --- | --- | --- |
-| #9 Add Runtime V2 config remediation | open | mergeable | Core contract-backed config-remediation loop: detect, diagnose, plan, patch, verify, receipt. |
-| #10 Add guarded Laravel external-agent remediation | open | mergeable | Stacked on #9; adds Laravel production error classification and guarded external-agent remediation. |
+| #12 Runtime V2 truth recovery architecture | merged | merged to `main` | Brought together Runtime V2 config remediation, guarded Laravel remediation, Goravel framework validation, durable workflow foundation, and Runtime V2 truth recovery. |
 
 Open issues:
 
 | Issue | Current reading |
 | --- | --- |
 | #2 Master plan | Still the product north star: standalone AI LogFixer with API, CLI, UI, integrations, safety, and durable remediation. |
-| #3 v1 contracts | Mostly implemented by the current contracts package, schemas, examples, and drift tests. Remaining work is TypeScript generation and closing the issue against the current artifact list. |
-| #4 fixtures | Partially covered by Go test fixtures and the Goravel live validation runbook. Still needs stable standalone fixtures committed outside temp/generated app state. |
-| #5 safety/redaction/status/versioning | Partially implemented in contracts and narrow executors. Still needs central policy enforcement, redaction pipeline, approval persistence, RBAC, and audit model. |
-| #6 integration boundaries | Partially documented by `external_refs` and architecture docs. Still needs explicit API ownership rules, webhooks, and connector boundaries. |
-| #11 real Goravel validation | Technically validated in this branch, with a GitHub issue comment recording the live result. Needs PR packaging before it can be closed. |
+| #3 v1 contracts | Implemented by contracts, schemas, examples, Go validation, and drift tests. TypeScript generation remains future Phase 7/UI work, not a Phase 1 blocker. |
+| #4 fixtures | Covered by standalone v1 examples for automatic/manual investigations, DB pool exhaustion, vulnerable dependency remediation, approved success, and rollback failure. |
+| #5 safety/redaction/status/versioning | Documented in `docs/architecture/safety-policy.md` and partly enforced in contracts/runners. Future work remains central policy service, RBAC, and production-grade approval persistence. |
+| #6 integration boundaries | Documented in `docs/architecture/external-integration-boundaries.md`; public API/webhook implementations remain future product work. |
+| #11 real Goravel validation | Implemented and merged through #12; issue can be closed with the Goravel adapter and runbook as evidence. |
 
 ## Reconstructed Architecture
 
