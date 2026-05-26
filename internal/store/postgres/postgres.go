@@ -68,6 +68,10 @@ func (t *workflowTx) InvestigationBranches() store.InvestigationBranchRepository
 	return investigationBranchRepo{q: t.q}
 }
 
+func (t *workflowTx) InvestigationDecisions() store.InvestigationDecisionRepository {
+	return investigationDecisionRepo{q: t.q}
+}
+
 func (t *workflowTx) DiagnosisResults() store.DiagnosisResultRepository {
 	return diagnosisResultRepo{q: t.q}
 }
@@ -257,6 +261,53 @@ func (r investigationBranchRepo) UpdateStatus(ctx context.Context, tenantID stri
 		return err
 	}
 	return updateStatus(ctx, r.q, "investigation_branches", tenantID, id, string(from), string(to))
+}
+
+type investigationDecisionRepo struct {
+	q queryer
+}
+
+func (r investigationDecisionRepo) Create(ctx context.Context, record store.ContractRecord[contractsv1.InvestigationDecision]) error {
+	payloadJSON, err := payloadJSON(record)
+	if err != nil {
+		return err
+	}
+	id := firstNonEmpty(record.ID, record.Payload.ID)
+	branchID := firstNonEmpty(record.Relations.BranchID, record.Payload.BranchID)
+	decision := string(record.Payload.Decision)
+	createdAt := firstTime(record.CreatedAt, record.Payload.CreatedAt, time.Now())
+	if err := require("investigation decision id", id); err != nil {
+		return err
+	}
+	if err := require("investigation decision branch id", branchID); err != nil {
+		return err
+	}
+	if err := require("investigation decision", decision); err != nil {
+		return err
+	}
+
+	_, err = r.q.ExecContext(ctx, `
+INSERT INTO investigation_decisions (
+    id, tenant_id, branch_id, contract_version, decision, reason, created_at, payload_json
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id,
+		record.TenantID,
+		branchID,
+		contractVersion(record.ContractVersion, record.Payload.ContractVersion),
+		decision,
+		record.Payload.Explanation,
+		createdAt,
+		payloadJSON,
+	)
+	return wrapExec("create investigation decision", err)
+}
+
+func (r investigationDecisionRepo) Get(ctx context.Context, tenantID string, id string) (store.ContractRecord[contractsv1.InvestigationDecision], error) {
+	return getContractRecord[contractsv1.InvestigationDecision](ctx, r.q, `
+SELECT id, tenant_id::text, '' AS environment_id, '' AS service_id, contract_version, decision AS status,
+       payload_json, 0::bigint AS lock_version, created_at, created_at AS updated_at
+FROM investigation_decisions
+WHERE tenant_id = $1 AND id = $2`, tenantID, id)
 }
 
 type diagnosisResultRepo struct {

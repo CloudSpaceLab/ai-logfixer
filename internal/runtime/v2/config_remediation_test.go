@@ -478,6 +478,10 @@ func (t *fakeWorkflowTx) InvestigationBranches() store.InvestigationBranchReposi
 	return nil
 }
 
+func (t *fakeWorkflowTx) InvestigationDecisions() store.InvestigationDecisionRepository {
+	return nil
+}
+
 func (t *fakeWorkflowTx) DiagnosisResults() store.DiagnosisResultRepository {
 	return nil
 }

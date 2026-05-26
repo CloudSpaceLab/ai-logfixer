@@ -164,6 +164,10 @@ func (t *fakeTx) InvestigationBranches() store.InvestigationBranchRepository {
 	return &t.investigationBranches
 }
 
+func (t *fakeTx) InvestigationDecisions() store.InvestigationDecisionRepository {
+	return nil
+}
+
 func (t *fakeTx) DiagnosisResults() store.DiagnosisResultRepository {
 	return nil
 }

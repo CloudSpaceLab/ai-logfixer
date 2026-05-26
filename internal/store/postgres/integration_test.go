@@ -144,6 +144,29 @@ VALUES ($1, $2, 'v1', $3, $4, $5, $6)`,
 		}); err != nil {
 			return err
 		}
+		if err := tx.InvestigationDecisions().Create(ctx, store.ContractRecord[contractsv1.InvestigationDecision]{
+			TenantID: tenantID,
+			Status:   string(contractsv1.InvestigationDecisionStartNew),
+			Relations: store.ContractRelations{
+				RequestID: "req-it-1",
+				ClusterID: "cluster-it-1",
+				BranchID:  "branch-it-1",
+			},
+			Payload: contractsv1.InvestigationDecision{
+				ID:              "decision-it-1",
+				ContractVersion: contractsv1.ContractVersion,
+				SchemaURL:       contractsv1.InvestigationDecisionSchemaURL,
+				RequestID:       "req-it-1",
+				Decision:        contractsv1.InvestigationDecisionStartNew,
+				Explanation:     "Start a new integration-test investigation.",
+				UserMessage:     "Started a new investigation.",
+				ClusterID:       "cluster-it-1",
+				BranchID:        "branch-it-1",
+				CreatedAt:       now,
+			},
+		}); err != nil {
+			return err
+		}
 		if err := tx.DiagnosisResults().Create(ctx, store.ContractRecord[contractsv1.DiagnosisResult]{
 			TenantID:      tenantID,
 			EnvironmentID: environmentID,

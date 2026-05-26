@@ -23,6 +23,7 @@ type Tx interface {
 	InvestigationRequests() InvestigationRequestRepository
 	InvestigationClusters() InvestigationClusterRepository
 	InvestigationBranches() InvestigationBranchRepository
+	InvestigationDecisions() InvestigationDecisionRepository
 	DiagnosisResults() DiagnosisResultRepository
 	RemediationPlans() RemediationPlanRepository
 	ApprovalRequests() ApprovalRequestRepository
@@ -76,6 +77,11 @@ type InvestigationBranchRepository interface {
 	Create(ctx context.Context, record ContractRecord[contractsv1.InvestigationBranch]) error
 	Get(ctx context.Context, tenantID string, id string) (ContractRecord[contractsv1.InvestigationBranch], error)
 	UpdateStatus(ctx context.Context, tenantID string, id string, from contractsv1.InvestigationStatus, to contractsv1.InvestigationStatus) error
+}
+
+type InvestigationDecisionRepository interface {
+	Create(ctx context.Context, record ContractRecord[contractsv1.InvestigationDecision]) error
+	Get(ctx context.Context, tenantID string, id string) (ContractRecord[contractsv1.InvestigationDecision], error)
 }
 
 type DiagnosisResultRepository interface {
