@@ -83,21 +83,12 @@ func (s *Service) StartNewInvestigation(ctx context.Context, input StartInput) (
 	if s == nil || s.store == nil {
 		return StartResult{}, errors.New("intake store is required")
 	}
-	now := s.now().UTC()
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	input = normalizeInput(input, now)
-	if err := validateInput(input); err != nil {
+	result, now, input, err := s.plan(input)
+	if err != nil {
 		return StartResult{}, err
 	}
 
-	result := buildStartResult(input, now, s.ids)
-	if err := validateResult(result); err != nil {
-		return StartResult{}, err
-	}
-
-	err := s.store.WithinTx(ctx, func(ctx context.Context, tx store.Tx) error {
+	err = s.store.WithinTx(ctx, func(ctx context.Context, tx store.Tx) error {
 		if err := tx.InvestigationRequests().Create(ctx, store.ContractRecord[contractsv1.InvestigationRequest]{
 			ID:              result.InvestigationRequest.ID,
 			TenantID:        input.TenantID,
@@ -175,6 +166,31 @@ func (s *Service) StartNewInvestigation(ctx context.Context, input StartInput) (
 		return StartResult{}, err
 	}
 	return result, nil
+}
+
+func (s *Service) PlanStartNewInvestigation(input StartInput) (StartResult, error) {
+	result, _, _, err := s.plan(input)
+	return result, err
+}
+
+func (s *Service) plan(input StartInput) (StartResult, time.Time, StartInput, error) {
+	if s == nil {
+		return StartResult{}, time.Time{}, StartInput{}, errors.New("intake service is required")
+	}
+	now := s.now().UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	input = normalizeInput(input, now)
+	if err := validateInput(input); err != nil {
+		return StartResult{}, time.Time{}, StartInput{}, err
+	}
+
+	result := buildStartResult(input, now, s.ids)
+	if err := validateResult(result); err != nil {
+		return StartResult{}, time.Time{}, StartInput{}, err
+	}
+	return result, now, input, nil
 }
 
 func normalizeInput(input StartInput, now time.Time) StartInput {

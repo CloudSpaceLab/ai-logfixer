@@ -39,6 +39,34 @@ AILOGFIXER_POSTGRES_DSN='postgres://user:pass@127.0.0.1:5432/ai_logfixer_test?ss
 
 The GitHub Actions workflow runs the normal Go suite and a PostgreSQL-backed integration job on pull requests.
 
+## HTTP detector intake
+
+`cmd/ai-logfixer-detect` is the first runnable Phase 2 bridge from logs to durable investigation intake. It reads key-value HTTP logs, groups repeated failures, and emits the contract records that `internal/intake` would persist.
+
+Dry-run:
+
+```bash
+go run ./cmd/ai-logfixer-detect \
+  -log ./tmp/access.log \
+  -service checkout-api \
+  -route /checkout \
+  -status 503 \
+  -threshold 3
+```
+
+Durable mode requires existing tenant, environment, and service IDs in the PostgreSQL workflow store:
+
+```bash
+go run ./cmd/ai-logfixer-detect \
+  -persist=true \
+  -postgres-dsn "$AILOGFIXER_POSTGRES_DSN" \
+  -tenant-id "$TENANT_ID" \
+  -environment-id "$ENVIRONMENT_ID" \
+  -service-id "$SERVICE_ID" \
+  -log ./tmp/access.log \
+  -service checkout-api
+```
+
 ## Architecture direction
 
 The current repo is intentionally contract-first. Runtime work should now converge on a durable workflow architecture instead of growing as separate CLI-only flows.
