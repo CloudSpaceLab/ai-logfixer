@@ -1,0 +1,116 @@
+{
+  "id": "cluster_go_api_v42_001",
+  "status": "running",
+  "primary_service": "go-api",
+  "summary": "go-api has an active availability branch for repeated 503s and a related auth branch for 403s after deploy v42.",
+  "active_branches": [
+    {
+      "id": "branch_go_api_503_availability_001",
+      "cluster_id": "cluster_go_api_v42_001",
+      "branch_type": "availability",
+      "symptom": "Repeated 503 responses",
+      "status": "running",
+      "source_request_ids": ["req_auto_go_api_503_001"],
+      "diagnosis_result_id": "diag_go_api_503_upstream_001",
+      "remediation_plan_id": "rem_plan_route_policy_001",
+      "display_status": "Investigating availability",
+      "user_message": "I am investigating the repeated 503 responses for go-api.",
+      "timeline_events": [
+        {
+          "id": "tl_branch_503_started_001",
+          "type": "investigation.started",
+          "message": "Availability branch started from automatic 503 detection.",
+          "severity": "info",
+          "timestamp": "2026-05-21T08:05:20Z"
+        }
+      ],
+      "knowledge_refs": [
+        {
+          "graph_id": "ai-logfixer-local",
+          "node_id": "service_go_api",
+          "node_type": "service",
+          "relationship": "investigates",
+          "confidence": 0.82,
+          "source": "orchestrator"
+        }
+      ],
+      "created_at": "2026-05-21T08:05:20Z",
+      "updated_at": "2026-05-21T08:07:00Z"
+    },
+    {
+      "id": "branch_go_api_403_auth_001",
+      "cluster_id": "cluster_go_api_v42_001",
+      "branch_type": "auth_policy",
+      "symptom": "Manual 403 investigation linked to active 503 cluster",
+      "status": "linked",
+      "source_request_ids": ["req_manual_go_api_403_001"],
+      "diagnosis_result_id": "",
+      "remediation_plan_id": "",
+      "display_status": "Linked related auth branch",
+      "user_message": "The 403 request is linked as a related auth and policy branch, not treated as a duplicate.",
+      "timeline_events": [
+        {
+          "id": "tl_branch_403_linked_001",
+          "type": "investigation.linked",
+          "message": "Manual 403 request linked to active go-api incident.",
+          "severity": "info",
+          "timestamp": "2026-05-21T08:06:00Z"
+        }
+      ],
+      "knowledge_refs": [
+        {
+          "graph_id": "ai-logfixer-local",
+          "node_id": "route_go_api_private",
+          "node_type": "route",
+          "relationship": "checks",
+          "confidence": 0.7,
+          "source": "orchestrator"
+        }
+      ],
+      "created_at": "2026-05-21T08:06:00Z",
+      "updated_at": "2026-05-21T08:06:00Z"
+    }
+  ],
+  "queued_branches": [],
+  "timeline_events": [
+    {
+      "id": "tl_cluster_created_001",
+      "type": "investigation.cluster_created",
+      "message": "Cluster created for go-api deploy v42 signals.",
+      "severity": "info",
+      "timestamp": "2026-05-21T08:05:20Z"
+    }
+  ],
+  "next_actions": [
+    {
+      "id": "next_open_cluster",
+      "label": "Open cluster",
+      "action_type": "open_investigation_cluster",
+      "description": "Show related branches for go-api.",
+      "enabled": true
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "github",
+      "type": "issue",
+      "id": "INC-503",
+      "url": "https://github.com/CloudSpaceLab/ai-logfixer/issues/503",
+      "metadata": {
+        "source": "fixture"
+      }
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "deploy_go_api_v42",
+      "node_type": "deployment",
+      "relationship": "correlates",
+      "confidence": 0.79,
+      "source": "orchestrator"
+    }
+  ],
+  "created_at": "2026-05-21T08:05:20Z",
+  "updated_at": "2026-05-21T08:07:00Z"
+}

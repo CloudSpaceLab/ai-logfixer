@@ -6,9 +6,14 @@ const (
 	ContractVersion                = "v1"
 	DiagnosisSchemaURL             = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json"
 	InvestigationRequestSchemaURL  = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-request.schema.json"
+	InvestigationClusterSchemaURL  = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-cluster.schema.json"
+	InvestigationBranchSchemaURL   = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-branch.schema.json"
 	InvestigationDecisionSchemaURL = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/investigation-decision.schema.json"
 	RemediationPlanSchemaURL       = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-plan.schema.json"
+	ApprovalRequestSchemaURL       = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/approval-request.schema.json"
 	RemediationAttemptSchemaURL    = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-attempt.schema.json"
+	RemediationEventSchemaURL      = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-event.schema.json"
+	ReceiptSchemaURL               = "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/receipt.schema.json"
 )
 
 type DiagnosisStatus string

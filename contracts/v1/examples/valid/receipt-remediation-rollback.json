@@ -1,0 +1,44 @@
+{
+  "id": "receipt_checkout_pool_rollback_001",
+  "diagnosis_id": "diag_checkout_db_pool_exhaustion_001",
+  "remediation_plan_id": "rem_plan_checkout_pool_config_001",
+  "remediation_attempt_id": "rem_attempt_checkout_pool_rollback_001",
+  "action_taken": "Applied the approved database pool config change, detected degraded health, and restored the previous config snapshot.",
+  "actor": "ai-logfixer",
+  "approver": "ops-lead@example.invalid",
+  "timestamp": "2026-05-21T09:16:30Z",
+  "before_state": "pool max_open=50 max_idle=2 conn_max_lifetime=0s",
+  "after_state": "rollback restored pool max_open=50 max_idle=2 conn_max_lifetime=0s",
+  "outcome": "rolled_back",
+  "summary": "The approved remediation failed monitoring and was rolled back successfully.",
+  "timeline_events": [
+    {
+      "id": "tl_receipt_rollback_001",
+      "type": "receipt.created",
+      "message": "Rollback receipt recorded after verification passed.",
+      "severity": "warning",
+      "timestamp": "2026-05-21T09:16:30Z"
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "observability",
+      "type": "dashboard",
+      "id": "checkout-db-pool",
+      "url": "https://observability.example.invalid/d/checkout-db-pool",
+      "metadata": {
+        "receipt_type": "rollback"
+      }
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "config_checkout_db_pool",
+      "node_type": "config",
+      "relationship": "restored",
+      "confidence": 0.92,
+      "source": "receipt"
+    }
+  ]
+}

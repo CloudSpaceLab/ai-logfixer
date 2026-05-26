@@ -1,0 +1,24 @@
+{
+  "id": "rem_event_checkout_pool_monitor_failed_001",
+  "remediation_attempt_id": "rem_attempt_checkout_pool_rollback_001",
+  "event_type": "remediation.failed",
+  "message": "HTTP 500 rate increased during the monitoring window, so rollback was triggered.",
+  "severity": "error",
+  "timestamp": "2026-05-21T09:14:00Z",
+  "ui_hints": {
+    "icon": "circle-alert",
+    "tone": "danger",
+    "sections": ["execution", "monitoring", "rollback"]
+  },
+  "external_refs": [
+    {
+      "system": "observability",
+      "type": "alert",
+      "id": "alert-checkout-500-rate",
+      "url": "https://observability.example.invalid/alerts/checkout-500-rate",
+      "metadata": {
+        "fixture": "true"
+      }
+    }
+  ]
+}

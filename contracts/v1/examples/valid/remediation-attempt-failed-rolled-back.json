@@ -1,0 +1,53 @@
+{
+  "id": "rem_attempt_checkout_pool_rollback_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-attempt.schema.json",
+  "remediation_plan_id": "rem_plan_checkout_pool_config_001",
+  "approval_request_id": "approval_checkout_pool_001",
+  "status": "rolled_back",
+  "execution_started_at": "2026-05-21T09:10:00Z",
+  "execution_finished_at": "2026-05-21T09:16:00Z",
+  "monitor_summary": {
+    "status": "failed_then_rolled_back",
+    "message": "HTTP 500 rate increased after the pool change, so the config snapshot was restored.",
+    "signals": ["http_500_rate", "db_pool_in_use", "rollback_verification"],
+    "duration": "6m"
+  },
+  "rollback_attempt_id": "rollback_attempt_checkout_pool_001",
+  "display_status": "Rolled back",
+  "user_message": "The approved pool change made the service worse, so I restored the previous config and recorded the rollback.",
+  "timeline_events": [
+    {
+      "id": "tl_pool_attempt_started_001",
+      "type": "remediation.running",
+      "message": "Approved database pool config change started.",
+      "severity": "info",
+      "timestamp": "2026-05-21T09:10:00Z"
+    },
+    {
+      "id": "tl_pool_attempt_failed_001",
+      "type": "remediation.failed",
+      "message": "Monitoring detected higher HTTP 500 rate after the change.",
+      "severity": "error",
+      "timestamp": "2026-05-21T09:14:00Z"
+    },
+    {
+      "id": "tl_pool_attempt_rolled_back_001",
+      "type": "remediation.rolled_back",
+      "message": "The previous config snapshot was restored and verification passed.",
+      "severity": "warning",
+      "timestamp": "2026-05-21T09:16:00Z"
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "observability",
+      "type": "dashboard",
+      "id": "checkout-db-pool",
+      "url": "https://observability.example.invalid/d/checkout-db-pool",
+      "metadata": {
+        "rollback": "true"
+      }
+    }
+  ]
+}

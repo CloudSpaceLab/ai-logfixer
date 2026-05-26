@@ -101,7 +101,41 @@ func schemaURLForExample(path string) (string, error) {
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return "", err
 	}
-	return envelope.SchemaURL, nil
+	if envelope.SchemaURL != "" {
+		return envelope.SchemaURL, nil
+	}
+
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return "", err
+	}
+	return inferSchemaURL(document)
+}
+
+func inferSchemaURL(document map[string]any) (string, error) {
+	switch {
+	case hasKeys(document, "diagnosis_id", "remediation_plan_id", "remediation_attempt_id", "action_taken"):
+		return ReceiptSchemaURL, nil
+	case hasKeys(document, "remediation_attempt_id", "event_type"):
+		return RemediationEventSchemaURL, nil
+	case hasKeys(document, "remediation_plan_id", "reason", "requested_by", "status"):
+		return ApprovalRequestSchemaURL, nil
+	case hasKeys(document, "primary_service", "active_branches", "queued_branches"):
+		return InvestigationClusterSchemaURL, nil
+	case hasKeys(document, "cluster_id", "branch_type", "source_request_ids"):
+		return InvestigationBranchSchemaURL, nil
+	default:
+		return "", fmt.Errorf("schema_url is required when schema cannot be inferred")
+	}
+}
+
+func hasKeys(document map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := document[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 type contract interface {
@@ -130,14 +164,29 @@ func decodeContractForExampleErr(path string) (contract, error) {
 	case InvestigationRequestSchemaURL:
 		var value InvestigationRequest
 		return value, decodeJSONFileErr(path, &value)
+	case InvestigationClusterSchemaURL:
+		var value InvestigationCluster
+		return value, decodeJSONFileErr(path, &value)
+	case InvestigationBranchSchemaURL:
+		var value InvestigationBranch
+		return value, decodeJSONFileErr(path, &value)
 	case InvestigationDecisionSchemaURL:
 		var value InvestigationDecision
 		return value, decodeJSONFileErr(path, &value)
 	case RemediationPlanSchemaURL:
 		var value RemediationPlan
 		return value, decodeJSONFileErr(path, &value)
+	case ApprovalRequestSchemaURL:
+		var value ApprovalRequest
+		return value, decodeJSONFileErr(path, &value)
 	case RemediationAttemptSchemaURL:
 		var value RemediationAttempt
+		return value, decodeJSONFileErr(path, &value)
+	case RemediationEventSchemaURL:
+		var value RemediationEvent
+		return value, decodeJSONFileErr(path, &value)
+	case ReceiptSchemaURL:
+		var value Receipt
 		return value, decodeJSONFileErr(path, &value)
 	default:
 		return nil, fmt.Errorf("unsupported schema_url %s", schemaURL)
