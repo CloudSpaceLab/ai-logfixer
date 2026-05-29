@@ -1,0 +1,88 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: readiness
+      POSTGRES_USER: readiness
+      POSTGRES_PASSWORD: readiness
+    ports:
+      - "15432:5432"
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: readiness
+      MYSQL_USER: readiness
+      MYSQL_PASSWORD: readiness
+      MYSQL_ROOT_PASSWORD: readiness-root
+    ports:
+      - "13306:3306"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+
+  php-laravel:
+    build: ./apps/php-laravel
+    environment:
+      FAULT_MODE: runtime_error
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      SESSION_DRIVER: array
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_DATABASE: readiness
+      DB_USERNAME: readiness
+      DB_PASSWORD: readiness
+    ports:
+      - "18081:8080"
+    depends_on:
+      - postgres
+
+  python-fastapi:
+    build: ./apps/python-fastapi
+    environment:
+      FAULT_MODE: runtime_error
+      DATABASE_URL: postgresql://readiness:readiness@postgres:5432/readiness
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "18082:8080"
+    depends_on:
+      - postgres
+      - redis
+
+  python-django:
+    build: ./apps/python-django
+    environment:
+      FAULT_MODE: runtime_error
+      DATABASE_URL: postgresql://readiness:readiness@postgres:5432/readiness
+    ports:
+      - "18083:8080"
+    depends_on:
+      - postgres
+
+  node-express:
+    build: ./apps/node-express
+    environment:
+      FAULT_MODE: runtime_error
+      DATABASE_URL: mysql://readiness:readiness@mysql:3306/readiness
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "18084:8080"
+    depends_on:
+      - mysql
+      - redis
+
+  ruby-rails:
+    build: ./apps/ruby-rails
+    environment:
+      FAULT_MODE: runtime_error
+      DATABASE_URL: postgresql://readiness:readiness@postgres:5432/readiness
+    ports:
+      - "18085:8080"
+    depends_on:
+      - postgres

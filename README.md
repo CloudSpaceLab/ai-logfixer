@@ -30,6 +30,14 @@ Run the full test suite:
 go test ./...
 ```
 
+Run the Docker readiness benchmark:
+
+```bash
+labs/readiness/bin/run-docker-lab.sh
+```
+
+The benchmark starts five broken framework apps plus PostgreSQL, MySQL, and Redis. It is expected to fail until a production resolver is wired in through `AI_LOGFIXER_CANDIDATE_COMMAND`. See [Docker Readiness Lab](labs/readiness/README.md).
+
 Run the optional PostgreSQL store integration test by pointing it at an empty test database. The test creates and drops an isolated schema:
 
 ```bash
