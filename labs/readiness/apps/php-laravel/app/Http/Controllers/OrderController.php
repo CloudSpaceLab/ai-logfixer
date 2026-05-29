@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-class OrderController
+class OrderController extends Controller
 {
     public function show(): string
     {

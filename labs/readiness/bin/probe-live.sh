@@ -12,7 +12,7 @@ services=(
 for service in "${services[@]}"; do
   name="${service%% *}"
   url="${service#* }"
-  status="$(curl -sS -o /tmp/ai-logfixer-readiness-body -w "%{http_code}" "$url" || true)"
+  status="$(curl -sS -H 'Accept: application/json' -o /tmp/ai-logfixer-readiness-body -w "%{http_code}" "$url" || true)"
   body="$(cat /tmp/ai-logfixer-readiness-body 2>/dev/null || true)"
   printf "%-16s status=%s body=%s\n" "$name" "$status" "$body"
 done

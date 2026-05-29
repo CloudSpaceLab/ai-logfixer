@@ -104,6 +104,7 @@ func Run(ctx context.Context, options Options) (Result, error) {
 	}
 	trace := ParseStackTrace(options.StackTrace, profile.Language)
 	owner := SourceOwnerFromTrace(trace, profile)
+	owner = normalizeOwnerPath(targetDir, owner)
 	contextBundle := BuildContext(targetDir, owner, profile)
 	ids := engine.NewContractIDFactory()
 	request := buildInvestigationRequest(ids, options, profile)
@@ -189,6 +190,14 @@ func Run(ctx context.Context, options Options) (Result, error) {
 	result.Attempt = attempt
 	result.Receipt = receipt
 	return result, nil
+}
+
+func normalizeOwnerPath(targetDir string, owner SourceOwner) SourceOwner {
+	if owner.File == "" || filepath.IsAbs(owner.File) {
+		return owner
+	}
+	owner.File = filepath.Join(targetDir, filepath.FromSlash(owner.File))
+	return owner
 }
 
 func ProfileTarget(targetDir string) (StackProfile, error) {

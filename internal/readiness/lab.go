@@ -28,17 +28,23 @@ type Manifest struct {
 }
 
 type Scenario struct {
-	ID                  string   `json:"id"`
-	ServiceName         string   `json:"service_name"`
-	Language            string   `json:"language"`
-	Framework           string   `json:"framework"`
-	AppDir              string   `json:"app_dir"`
-	StackTraceFile      string   `json:"stack_trace_file"`
-	Message             string   `json:"message"`
-	DockerService       string   `json:"docker_service"`
-	ValidationCommands  []string `json:"validation_commands"`
-	ExpectedOwnerSuffix string   `json:"expected_owner_suffix"`
-	Faults              []Fault  `json:"faults"`
+	ID                       string   `json:"id"`
+	ServiceName              string   `json:"service_name"`
+	Language                 string   `json:"language"`
+	Framework                string   `json:"framework"`
+	AppDir                   string   `json:"app_dir"`
+	StackTraceFile           string   `json:"stack_trace_file"`
+	Message                  string   `json:"message"`
+	DockerService            string   `json:"docker_service"`
+	ValidationCommands       []string `json:"validation_commands"`
+	DockerValidationCommands []string `json:"docker_validation_commands"`
+	ExpectedOwnerSuffix      string   `json:"expected_owner_suffix"`
+	ContainerAppDir          string   `json:"container_app_dir"`
+	LiveProbeURL             string   `json:"live_probe_url"`
+	ExpectedBrokenStatus     int      `json:"expected_broken_status"`
+	ExpectedFixedStatus      int      `json:"expected_fixed_status"`
+	FixedBodyContains        string   `json:"fixed_body_contains"`
+	Faults                   []Fault  `json:"faults"`
 }
 
 type Fault struct {
@@ -48,16 +54,19 @@ type Fault struct {
 }
 
 type SmokeOptions struct {
-	ManifestPath string
-	WorkDir      string
-	Now          time.Time
-	AgentCommand string
-	AgentModel   string
-	AgentName    string
-	Concurrency  int
-	KeepWorkdir  bool
-	MaxFiles     int
-	AgentRunner  agentfix.AgentRunner
+	ManifestPath        string
+	WorkDir             string
+	TraceDir            string
+	Now                 time.Time
+	AgentCommand        string
+	AgentModel          string
+	AgentName           string
+	Concurrency         int
+	KeepWorkdir         bool
+	InPlace             bool
+	UseDockerValidation bool
+	MaxFiles            int
+	AgentRunner         agentfix.AgentRunner
 }
 
 type SmokeReport struct {
@@ -135,6 +144,14 @@ func (m Manifest) Validate() error {
 		if len(scenario.ValidationCommands) == 0 {
 			errs = append(errs, fmt.Errorf("%s validation_commands are required", prefix))
 		}
+		if scenario.ExpectedFixedStatus != 0 {
+			if strings.TrimSpace(scenario.LiveProbeURL) == "" {
+				errs = append(errs, fmt.Errorf("%s live_probe_url is required when expected_fixed_status is set", prefix))
+			}
+			if strings.TrimSpace(scenario.FixedBodyContains) == "" {
+				errs = append(errs, fmt.Errorf("%s fixed_body_contains is required when expected_fixed_status is set", prefix))
+			}
+		}
 	}
 	for _, required := range m.RequiredScenarios {
 		if !seen[required] {
@@ -157,7 +174,7 @@ func RunLocalSmoke(ctx context.Context, options SmokeOptions) (SmokeReport, erro
 	if strings.TrimSpace(options.ManifestPath) == "" {
 		return SmokeReport{}, errors.New("manifest path is required")
 	}
-	if strings.TrimSpace(options.WorkDir) == "" {
+	if strings.TrimSpace(options.WorkDir) == "" && !options.InPlace {
 		return SmokeReport{}, errors.New("work dir is required")
 	}
 	if options.Now.IsZero() {
@@ -243,22 +260,32 @@ func RunLocalSmoke(ctx context.Context, options SmokeOptions) (SmokeReport, erro
 func runScenario(ctx context.Context, baseDir string, options SmokeOptions, scenario Scenario) (ScenarioResult, error) {
 	sourceDir := filepath.Join(baseDir, filepath.FromSlash(scenario.AppDir))
 	targetDir := filepath.Join(options.WorkDir, scenario.ID)
-	if err := copyTree(sourceDir, targetDir); err != nil {
+	if options.InPlace {
+		targetDir = sourceDir
+	} else if err := copyTree(sourceDir, targetDir); err != nil {
 		return ScenarioResult{}, fmt.Errorf("%s copy app: %w", scenario.ID, err)
 	}
 	tracePath := filepath.Join(baseDir, filepath.FromSlash(scenario.StackTraceFile))
+	if strings.TrimSpace(options.TraceDir) != "" {
+		tracePath = filepath.Join(options.TraceDir, scenario.ID+".log")
+	}
 	rawTrace, err := os.ReadFile(tracePath)
 	if err != nil {
 		return ScenarioResult{}, fmt.Errorf("%s read trace: %w", scenario.ID, err)
 	}
 	trace := strings.ReplaceAll(string(rawTrace), "{{APP_DIR}}", targetDir)
+	trace = normalizeLiveTrace(trace, scenario.ContainerAppDir, targetDir)
+	validationCommands := scenario.ValidationCommands
+	if options.UseDockerValidation && len(scenario.DockerValidationCommands) > 0 {
+		validationCommands = scenario.DockerValidationCommands
+	}
 	runResult, err := resolver.Run(ctx, resolver.Options{
 		ServiceName:        scenario.ServiceName,
 		TargetDir:          targetDir,
 		StackTrace:         trace,
 		Message:            scenario.Message,
 		Apply:              true,
-		ValidationCommands: scenario.ValidationCommands,
+		ValidationCommands: validationCommands,
 		AgentCommand:       options.AgentCommand,
 		AgentModel:         options.AgentModel,
 		AgentName:          options.AgentName,
@@ -285,6 +312,70 @@ func runScenario(ctx context.Context, baseDir string, options SmokeOptions, scen
 		result.AgentExitCode = runResult.AgentResult.AgentOutput.ExitCode
 	}
 	return result, nil
+}
+
+func normalizeLiveTrace(raw string, containerAppDir string, hostAppDir string) string {
+	trace := stripComposeLogPrefixes(raw)
+	if strings.TrimSpace(containerAppDir) == "" {
+		return trace
+	}
+	containerDir := strings.TrimRight(filepath.ToSlash(containerAppDir), "/")
+	hostDir := filepath.ToSlash(hostAppDir)
+	if containerDir == "" || containerDir == "." || hostDir == "" {
+		return trace
+	}
+	return mapContainerAppPaths(trace, containerDir, hostDir)
+}
+
+func stripComposeLogPrefixes(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for index, line := range lines {
+		if before, after, ok := strings.Cut(line, " | "); ok && strings.Contains(before, "-") {
+			lines[index] = after
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func mapContainerAppPaths(raw string, containerDir string, hostDir string) string {
+	var builder strings.Builder
+	for index := 0; index < len(raw); {
+		if strings.HasPrefix(raw[index:], containerDir) &&
+			hasContainerPathPrefixBoundary(raw, index) &&
+			hasContainerPathSuffixBoundary(raw, index, len(containerDir)) {
+			builder.WriteString(hostDir)
+			index += len(containerDir)
+			continue
+		}
+		builder.WriteByte(raw[index])
+		index++
+	}
+	return builder.String()
+}
+
+func hasContainerPathPrefixBoundary(raw string, start int) bool {
+	if start == 0 {
+		return true
+	}
+	switch raw[start-1] {
+	case ' ', '\n', '\r', '\t', '"', '\'', '(', '[', '{':
+		return true
+	default:
+		return false
+	}
+}
+
+func hasContainerPathSuffixBoundary(raw string, start int, length int) bool {
+	next := start + length
+	if next >= len(raw) {
+		return true
+	}
+	switch raw[next] {
+	case '/', ':', '"', '\'', ')', ' ', '\n', '\r', '\t':
+		return true
+	default:
+		return false
+	}
 }
 
 func copyTree(source string, target string) error {

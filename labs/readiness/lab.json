@@ -23,7 +23,15 @@
       "validation_commands": [
         "php -l app/Http/Controllers/OrderController.php"
       ],
+      "docker_validation_commands": [
+        "docker run --rm -v \"$PWD\":/app -w /app php:8.3-cli php -l app/Http/Controllers/OrderController.php"
+      ],
       "expected_owner_suffix": "app/Http/Controllers/OrderController.php",
+      "container_app_dir": "/app",
+      "live_probe_url": "http://127.0.0.1:18081/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
       "faults": [
         {
           "id": "controller-runtime-error",
@@ -49,7 +57,15 @@
       "validation_commands": [
         "python3 -m py_compile app/main.py"
       ],
+      "docker_validation_commands": [
+        "docker run --rm -v \"$PWD\":/app -w /app python:3.12-slim python -m py_compile app/main.py"
+      ],
       "expected_owner_suffix": "app/main.py",
+      "container_app_dir": "/app",
+      "live_probe_url": "http://127.0.0.1:18082/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
       "faults": [
         {
           "id": "endpoint-runtime-error",
@@ -75,7 +91,15 @@
       "validation_commands": [
         "python3 -m py_compile orders/views.py readiness/settings.py readiness/urls.py"
       ],
+      "docker_validation_commands": [
+        "docker run --rm -v \"$PWD\":/app -w /app python:3.12-slim python -m py_compile orders/views.py readiness/settings.py readiness/urls.py"
+      ],
       "expected_owner_suffix": "orders/views.py",
+      "container_app_dir": "/app",
+      "live_probe_url": "http://127.0.0.1:18083/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
       "faults": [
         {
           "id": "view-runtime-error",
@@ -101,7 +125,15 @@
       "validation_commands": [
         "node --check src/server.js"
       ],
+      "docker_validation_commands": [
+        "docker run --rm -v \"$PWD\":/app -w /app node:22-alpine node --check src/server.js"
+      ],
       "expected_owner_suffix": "src/server.js",
+      "container_app_dir": "/app",
+      "live_probe_url": "http://127.0.0.1:18084/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
       "faults": [
         {
           "id": "route-runtime-error",
@@ -127,7 +159,15 @@
       "validation_commands": [
         "ruby -c app/controllers/orders_controller.rb"
       ],
+      "docker_validation_commands": [
+        "docker run --rm -v \"$PWD\":/app -w /app ruby:3.3 ruby -c app/controllers/orders_controller.rb"
+      ],
       "expected_owner_suffix": "app/controllers/orders_controller.rb",
+      "container_app_dir": "/app",
+      "live_probe_url": "http://127.0.0.1:18085/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
       "faults": [
         {
           "id": "controller-runtime-error",

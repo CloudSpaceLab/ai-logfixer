@@ -231,6 +231,38 @@ func TestRunEscalatesSafelyWhenNoAgentIsConfigured(t *testing.T) {
 	}
 }
 
+func TestRunNormalizesRelativeApplicationFramesToTargetDir(t *testing.T) {
+	t.Parallel()
+
+	targetDir := t.TempDir()
+	writeFile(t, filepath.Join(targetDir, "Gemfile"), "gem 'rails'\n")
+	writeFile(t, filepath.Join(targetDir, "config", "routes.rb"), "Rails.application.routes.draw do\nend\n")
+	sourcePath := filepath.Join(targetDir, "app", "controllers", "orders_controller.rb")
+	writeFile(t, sourcePath, `class OrdersController < ApplicationController
+  def show
+    "BROKEN"
+  end
+end
+`)
+
+	result, err := Run(context.Background(), Options{
+		ServiceName:        "rails-relative-trace",
+		TargetDir:          targetDir,
+		StackTrace:         "RuntimeError (database unavailable):\napp/controllers/orders_controller.rb:3:in `show'",
+		Message:            "database unavailable",
+		Apply:              true,
+		ValidationCommands: []string{"ruby -c app/controllers/orders_controller.rb"},
+		Now:                time.Date(2026, 5, 29, 9, 45, 0, 0, time.UTC),
+		AgentRunner:        replaceBrokenWithFixedAgent(t),
+	})
+	if err != nil {
+		t.Fatalf("run resolver: %v", err)
+	}
+	if !samePath(result.SourceOwner.File, sourcePath) {
+		t.Fatalf("expected source owner %s, got %+v", sourcePath, result.SourceOwner)
+	}
+}
+
 func replaceBrokenWithFixedAgent(t *testing.T) agentfix.AgentRunner {
 	t.Helper()
 

@@ -30,6 +30,14 @@ Run the full test suite:
 go test ./...
 ```
 
+Run the Docker production readiness lab:
+
+```bash
+labs/readiness/bin/run-docker-lab.sh
+```
+
+The lab builds five real service containers plus PostgreSQL, MySQL, and Redis, drives broken HTTP requests, captures live logs, runs the readiness resolver with five-way concurrency, applies guarded fixes in a copied lab workspace, rebuilds the services, and verifies that every fixed endpoint returns `200` with the expected response body. See [Production Readiness Lab](labs/readiness/README.md) for prerequisites, ports, artifacts, and agent options.
+
 Run the optional PostgreSQL store integration test by pointing it at an empty test database. The test creates and drops an isolated schema:
 
 ```bash

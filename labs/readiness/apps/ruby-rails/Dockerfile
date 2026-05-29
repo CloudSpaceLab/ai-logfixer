@@ -5,4 +5,4 @@ RUN bundle install || true
 COPY . /app
 ENV FAULT_MODE=runtime_error
 EXPOSE 8080
-CMD ["ruby", "config/server.rb"]
+CMD ["bundle", "exec", "rackup", "-o", "0.0.0.0", "-p", "8080", "config.ru"]

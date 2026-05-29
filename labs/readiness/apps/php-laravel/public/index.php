@@ -1,22 +1,13 @@
 <?php
 
-require __DIR__ . '/../app/Http/Controllers/OrderController.php';
+use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
 
-use App\Http\Controllers\OrderController;
+define('LARAVEL_START', microtime(true));
 
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+require __DIR__ . '/../vendor/autoload.php';
 
-if (preg_match('#^/orders/([^/]+)$#', $path)) {
-    try {
-        http_response_code(200);
-        echo (new OrderController())->show();
-    } catch (Throwable $error) {
-        error_log($error);
-        http_response_code(503);
-        echo $error->getMessage();
-    }
-    return;
-}
+/** @var Application $app */
+$app = require_once __DIR__ . '/../bootstrap/app.php';
 
-http_response_code(404);
-echo 'not found';
+$app->handleRequest(Request::capture());
