@@ -4,7 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -96,6 +99,68 @@ func TestRunValidationFailurePreventsApply(t *testing.T) {
 	}
 }
 
+func TestRunAgentCommandTimeoutKillsChildProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process group timeout behavior is implemented separately on windows")
+	}
+
+	targetDir := t.TempDir()
+	mustWrite(t, filepath.Join(targetDir, "app.php"), "broken\n")
+
+	scriptPath := filepath.Join(t.TempDir(), "spawn-child.sh")
+	pidPath := filepath.Join(t.TempDir(), "child.pid")
+	mustWrite(t, scriptPath, "#!/bin/sh\nsleep 30 &\necho $! > \"$1\"\nwait $!\n")
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatalf("chmod script: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct {
+		output CommandOutput
+		err    error
+	}, 1)
+	go func() {
+		output, err := runAgentCommand(ctx, AgentContext{
+			TargetDir:  targetDir,
+			StagingDir: targetDir,
+			Prompt:     "Run a long agent.",
+			PromptPath: filepath.Join(targetDir, "prompt.md"),
+			Command:    []string{scriptPath, pidPath},
+		})
+		done <- struct {
+			output CommandOutput
+			err    error
+		}{output: output, err: err}
+	}()
+
+	pid := readPID(t, pidPath)
+	started := time.Now()
+	cancel()
+	var runResult struct {
+		output CommandOutput
+		err    error
+	}
+	select {
+	case runResult = <-done:
+	case <-time.After(2 * time.Second):
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatalf("expected canceled agent command to return within 2s")
+	}
+	elapsed := time.Since(started)
+	if runResult.err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("expected timeout to return quickly, took %s", elapsed)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if processExists(pid) {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatalf("expected timeout to kill child process %d", pid)
+	}
+}
+
 func mustWrite(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -104,4 +169,27 @@ func mustWrite(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func readPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if parseErr != nil {
+				t.Fatalf("parse pid %q: %v", raw, parseErr)
+			}
+			return pid
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pid file was not written: %s", path)
+	return 0
+}
+
+func processExists(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil
 }

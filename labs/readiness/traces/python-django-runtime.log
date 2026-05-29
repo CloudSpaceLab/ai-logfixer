@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "{{APP_DIR}}/orders/views.py", line 8, in orders
+    raise RuntimeError("database unavailable")
+RuntimeError: database unavailable

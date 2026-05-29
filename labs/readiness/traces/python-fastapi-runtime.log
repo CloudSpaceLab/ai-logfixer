@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "{{APP_DIR}}/app/main.py", line 10, in get_order
+    raise RuntimeError("database unavailable")
+RuntimeError: database unavailable

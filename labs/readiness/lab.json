@@ -1,0 +1,145 @@
+{
+  "version": "v1",
+  "name": "AI LogFixer production readiness lab",
+  "docker_compose": "docker-compose.yml",
+  "minimum_pass_rate": 1.0,
+  "required_scenarios": [
+    "php-laravel",
+    "python-fastapi",
+    "python-django",
+    "node-express",
+    "ruby-rails"
+  ],
+  "scenarios": [
+    {
+      "id": "php-laravel",
+      "service_name": "readiness-php-laravel",
+      "language": "php",
+      "framework": "laravel",
+      "app_dir": "apps/php-laravel",
+      "stack_trace_file": "traces/php-laravel-runtime.log",
+      "message": "database unavailable",
+      "docker_service": "php-laravel",
+      "validation_commands": [
+        "php -l app/Http/Controllers/OrderController.php"
+      ],
+      "expected_owner_suffix": "app/Http/Controllers/OrderController.php",
+      "faults": [
+        {
+          "id": "controller-runtime-error",
+          "description": "Order controller throws a runtime error while handling a request.",
+          "mode": "runtime_error"
+        },
+        {
+          "id": "db-config-error",
+          "description": "Application cannot connect to the configured database.",
+          "mode": "db_config_error"
+        }
+      ]
+    },
+    {
+      "id": "python-fastapi",
+      "service_name": "readiness-python-fastapi",
+      "language": "python",
+      "framework": "fastapi",
+      "app_dir": "apps/python-fastapi",
+      "stack_trace_file": "traces/python-fastapi-runtime.log",
+      "message": "database unavailable",
+      "docker_service": "python-fastapi",
+      "validation_commands": [
+        "python3 -m py_compile app/main.py"
+      ],
+      "expected_owner_suffix": "app/main.py",
+      "faults": [
+        {
+          "id": "endpoint-runtime-error",
+          "description": "FastAPI endpoint raises a runtime error.",
+          "mode": "runtime_error"
+        },
+        {
+          "id": "settings-error",
+          "description": "FastAPI service receives an invalid database URL.",
+          "mode": "settings_error"
+        }
+      ]
+    },
+    {
+      "id": "python-django",
+      "service_name": "readiness-python-django",
+      "language": "python",
+      "framework": "django",
+      "app_dir": "apps/python-django",
+      "stack_trace_file": "traces/python-django-runtime.log",
+      "message": "database unavailable",
+      "docker_service": "python-django",
+      "validation_commands": [
+        "python3 -m py_compile orders/views.py readiness/settings.py readiness/urls.py"
+      ],
+      "expected_owner_suffix": "orders/views.py",
+      "faults": [
+        {
+          "id": "view-runtime-error",
+          "description": "Django view raises a runtime error while handling a request.",
+          "mode": "runtime_error"
+        },
+        {
+          "id": "database-url-error",
+          "description": "Django service receives an invalid database URL.",
+          "mode": "database_url_error"
+        }
+      ]
+    },
+    {
+      "id": "node-express",
+      "service_name": "readiness-node-express",
+      "language": "node",
+      "framework": "express",
+      "app_dir": "apps/node-express",
+      "stack_trace_file": "traces/node-express-runtime.log",
+      "message": "database unavailable",
+      "docker_service": "node-express",
+      "validation_commands": [
+        "node --check src/server.js"
+      ],
+      "expected_owner_suffix": "src/server.js",
+      "faults": [
+        {
+          "id": "route-runtime-error",
+          "description": "Express route throws a runtime error.",
+          "mode": "runtime_error"
+        },
+        {
+          "id": "dependency-config-error",
+          "description": "Express service receives an invalid database URL.",
+          "mode": "dependency_config_error"
+        }
+      ]
+    },
+    {
+      "id": "ruby-rails",
+      "service_name": "readiness-ruby-rails",
+      "language": "ruby",
+      "framework": "rails",
+      "app_dir": "apps/ruby-rails",
+      "stack_trace_file": "traces/ruby-rails-runtime.log",
+      "message": "database unavailable",
+      "docker_service": "ruby-rails",
+      "validation_commands": [
+        "ruby -c app/controllers/orders_controller.rb"
+      ],
+      "expected_owner_suffix": "app/controllers/orders_controller.rb",
+      "faults": [
+        {
+          "id": "controller-runtime-error",
+          "description": "Rails controller raises a runtime error.",
+          "mode": "runtime_error"
+        },
+        {
+          "id": "active-record-error",
+          "description": "Rails action fails while resolving database state.",
+          "mode": "active_record_error"
+        }
+      ]
+    }
+  ]
+}

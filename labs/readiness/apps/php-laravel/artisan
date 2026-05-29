@@ -1,0 +1,4 @@
+#!/usr/bin/env php
+<?php
+
+echo "AI LogFixer readiness Laravel fixture\n";

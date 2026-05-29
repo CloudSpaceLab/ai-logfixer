@@ -285,7 +285,7 @@ func buildAgentCommand(options Options, targetDir string, stagingDir string, pro
 }
 
 func runAgentCommand(ctx context.Context, agent AgentContext) (CommandOutput, error) {
-	cmd := exec.CommandContext(ctx, agent.Command[0], agent.Command[1:]...)
+	cmd := exec.Command(agent.Command[0], agent.Command[1:]...)
 	cmd.Dir = agent.StagingDir
 	cmd.Stdin = strings.NewReader(agent.Prompt)
 	cmd.Env = append(os.Environ(),
@@ -293,11 +293,40 @@ func runAgentCommand(ctx context.Context, agent AgentContext) (CommandOutput, er
 		"AI_LOGFIXER_STAGING_DIR="+agent.StagingDir,
 		"AI_LOGFIXER_PROMPT_FILE="+agent.PromptPath,
 	)
+	prepareAgentCommand(cmd)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return CommandOutput{
+			Stdout:   stdout.String(),
+			Stderr:   stderr.String(),
+			ExitCode: exitCode(err),
+		}, err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		killAgentCommand(cmd)
+		waitErr := <-done
+		if waitErr != nil {
+			err = waitErr
+		}
+		if err == nil {
+			err = ctx.Err()
+		}
+		return CommandOutput{
+			Stdout:   stdout.String(),
+			Stderr:   stderr.String(),
+			ExitCode: exitCode(err),
+		}, fmt.Errorf("agent command canceled: %w", ctx.Err())
+	}
 	return CommandOutput{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),

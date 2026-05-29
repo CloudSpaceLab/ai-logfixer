@@ -1,0 +1,2 @@
+RuntimeError (database unavailable):
+  {{APP_DIR}}/app/controllers/orders_controller.rb:3:in 'show'

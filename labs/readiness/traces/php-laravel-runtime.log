@@ -1,0 +1,4 @@
+[2026-05-29 12:00:00] production.ERROR: RuntimeException: database unavailable in {{APP_DIR}}/app/Http/Controllers/OrderController.php:9
+Stack trace:
+#0 {{APP_DIR}}/app/Http/Controllers/OrderController.php(9): App\Http\Controllers\OrderController->show()
+#1 {main}
