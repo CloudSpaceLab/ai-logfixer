@@ -1,0 +1,5 @@
+{
+  "name": "@acme/tax-client",
+  "version": "1.0.0",
+  "main": "index.js"
+}

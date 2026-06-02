@@ -1,0 +1,5 @@
+{
+  "api_base_url": "http://config-upstream:8080",
+  "source": "trusted-server-inventory",
+  "captured_at": "2026-06-01T12:00:00Z"
+}

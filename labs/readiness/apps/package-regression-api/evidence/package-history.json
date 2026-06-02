@@ -1,0 +1,6 @@
+{
+  "package": "@acme/tax-client",
+  "last_known_good": "file:packages/tax-client-1.0.0",
+  "current": "file:packages/tax-client-2.0.0",
+  "change": "automatic package update during maintenance window"
+}

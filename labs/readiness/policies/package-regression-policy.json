@@ -1,0 +1,23 @@
+{
+  "lane": "package-regression",
+  "allowed_files": [
+    "package.json"
+  ],
+  "allowed_packages": [
+    "@acme/tax-client"
+  ],
+  "preferred_action": "rollback_to_last_known_good",
+  "trusted_sources": [
+    "evidence/package-history.json"
+  ],
+  "forbidden_actions": [
+    "upgrade_to_latest",
+    "rewrite_dependency_graph"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18082/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}

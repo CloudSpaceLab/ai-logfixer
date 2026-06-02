@@ -30,6 +30,15 @@ Run the full test suite:
 go test ./...
 ```
 
+Run the operational drift Docker readiness lab:
+
+```bash
+labs/readiness/bin/run-docker-lab.sh --mode fixture-health
+labs/readiness/bin/run-docker-lab.sh --mode benchmark
+```
+
+Fixture health is expected to pass. Benchmark mode is expected to fail today unless a real candidate fixer is provided through `AI_LOGFIXER_CANDIDATE_COMMAND`. See [Operational Drift Docker Readiness Lab](labs/readiness/README.md).
+
 Run the optional PostgreSQL store integration test by pointing it at an empty test database. The test creates and drops an isolated schema:
 
 ```bash
