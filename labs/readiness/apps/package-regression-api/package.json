@@ -1,0 +1,9 @@
+{
+  "name": "package-regression-api",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "@acme/tax-client": "file:packages/tax-client-2.0.0",
+    "express": "4.19.2"
+  }
+}

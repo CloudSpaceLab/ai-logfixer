@@ -1,0 +1,73 @@
+{
+  "version": "operational-readiness/v1",
+  "name": "AI LogFixer operational drift Docker readiness benchmark",
+  "expected_current_mode": "benchmark-fails-without-candidate",
+  "required_lanes": [
+    "config-drift",
+    "package-regression",
+    "permission-drift",
+    "restart-reload"
+  ],
+  "scenarios": [
+    {
+      "id": "config-drift-api",
+      "operational_lane": "config-drift",
+      "runtime": "python",
+      "app_carrier": "python-http",
+      "service_name": "config-drift-api",
+      "docker_service": "config-drift-api",
+      "app_dir": "apps/config-drift-api",
+      "policy_file": "policies/config-drift-policy.json",
+      "live_probe_url": "http://127.0.0.1:18081/orders/readiness",
+      "expected_broken_status": 502,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "safe_action": "patch allowlisted config key from trusted last-known-good snapshot"
+    },
+    {
+      "id": "package-regression-api",
+      "operational_lane": "package-regression",
+      "runtime": "node",
+      "app_carrier": "express",
+      "service_name": "package-regression-api",
+      "docker_service": "package-regression-api",
+      "app_dir": "apps/package-regression-api",
+      "policy_file": "policies/package-regression-policy.json",
+      "live_probe_url": "http://127.0.0.1:18082/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "safe_action": "rollback package to last-known-good pinned version"
+    },
+    {
+      "id": "permission-drift-api",
+      "operational_lane": "permission-drift",
+      "runtime": "python",
+      "app_carrier": "python-http",
+      "service_name": "permission-drift-api",
+      "docker_service": "permission-drift-api",
+      "app_dir": "apps/permission-drift-api",
+      "policy_file": "policies/permission-drift-policy.json",
+      "live_probe_url": "http://127.0.0.1:18083/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "safe_action": "repair allowlisted path owner and mode only"
+    },
+    {
+      "id": "restart-reload-api",
+      "operational_lane": "restart-reload",
+      "runtime": "go",
+      "app_carrier": "net-http",
+      "service_name": "restart-reload-api",
+      "docker_service": "restart-reload-api",
+      "app_dir": "apps/restart-reload-api",
+      "policy_file": "policies/restart-reload-policy.json",
+      "live_probe_url": "http://127.0.0.1:18084/orders/readiness",
+      "expected_broken_status": 503,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "safe_action": "restart the smallest allowlisted service target"
+    }
+  ]
+}

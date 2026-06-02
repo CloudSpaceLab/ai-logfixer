@@ -1,0 +1,20 @@
+{
+  "lane": "restart-reload",
+  "allowed_restart_targets": [
+    "restart-reload-api"
+  ],
+  "restart_rate_limit": {
+    "max_attempts": 1,
+    "window_seconds": 300
+  },
+  "forbidden_actions": [
+    "restart_all_services",
+    "restart_loop"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18084/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}
