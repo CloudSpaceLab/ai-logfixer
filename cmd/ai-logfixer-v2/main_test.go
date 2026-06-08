@@ -219,3 +219,85 @@ func Handler() {
 		t.Fatalf("expected escalated attempt and receipt, got attempt=%+v receipt=%+v", result.Attempt, result.Receipt)
 	}
 }
+
+func TestRunPermissionsModeAppliesLaravelPermissionRepair(t *testing.T) {
+	t.Parallel()
+
+	appDir := newPermissionLaravelApp(t)
+	logsDir := filepath.Join(appDir, "storage", "logs")
+	if err := os.Chmod(logsDir, 0o500); err != nil {
+		t.Fatalf("break logs dir mode: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := os.WriteFile(filepath.Join(logsDir, "orders.log"), []byte("ok\n"), 0o644); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte("orders ok"))
+	}))
+	t.Cleanup(server.Close)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{
+		"-mode", "permissions",
+		"-service", "orders-api",
+		"-target", appDir,
+		"-framework", "auto",
+		"-verify-url", server.URL,
+		"-expected-status", "200",
+		"-apply",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+
+	var result output
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, stdout.String())
+	}
+	if result.RemediationPlan == nil || result.RemediationPlan.Status != contractsv1.RemediationStatusApproved {
+		t.Fatalf("expected approved permissions remediation plan, got %+v", result.RemediationPlan)
+	}
+	if result.Attempt == nil || result.Attempt.Status != contractsv1.RemediationStatusSucceeded {
+		t.Fatalf("expected succeeded permissions attempt, got %+v", result.Attempt)
+	}
+	if result.Receipt == nil || result.Receipt.Outcome != "succeeded" {
+		t.Fatalf("expected succeeded permissions receipt, got %+v", result.Receipt)
+	}
+	if !strings.Contains(stderr.String(), "Runtime V2 permissions completed") {
+		t.Fatalf("expected permissions completion message, got %q", stderr.String())
+	}
+	info, err := os.Stat(logsDir)
+	if err != nil {
+		t.Fatalf("stat repaired logs dir: %v", err)
+	}
+	if info.Mode().Perm() != 0o775 {
+		t.Fatalf("expected logs dir mode 0775, got %04o", info.Mode().Perm())
+	}
+}
+
+func newPermissionLaravelApp(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "artisan"), []byte("#!/usr/bin/env php\n"), 0o755); err != nil {
+		t.Fatalf("write artisan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "composer.json"), []byte(`{"require":{"laravel/framework":"^11.0"}}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write composer.json: %v", err)
+	}
+	for _, dir := range []string{
+		"storage",
+		"storage/logs",
+		"storage/framework/cache",
+		"storage/framework/sessions",
+		"storage/framework/views",
+		"bootstrap/cache",
+	} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o775); err != nil {
+			t.Fatalf("create %s: %v", dir, err)
+		}
+	}
+	return root
+}

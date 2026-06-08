@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	contractsv1 "github.com/CloudSpaceLab/ai-logfixer/internal/contracts/v1"
+	permissions "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/permissions"
 	runtimev2 "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/v2"
 	"github.com/CloudSpaceLab/ai-logfixer/internal/truth"
 )
@@ -23,6 +24,11 @@ type output struct {
 	Receipt              *contractsv1.Receipt              `json:"receipt,omitempty"`
 	BackupPath           string                            `json:"backup_path,omitempty"`
 	TruthRecovery        *truth.TruthRecoveryResult        `json:"truth_recovery,omitempty"`
+	Framework            string                            `json:"framework,omitempty"`
+	PermissionPolicy     *permissions.PermissionPolicy     `json:"permission_policy,omitempty"`
+	PermissionFindings   []permissions.PermissionFinding   `json:"permission_findings,omitempty"`
+	PermissionOperations []permissions.PermissionOperation `json:"permission_operations,omitempty"`
+	RollbackPath         string                            `json:"rollback_path,omitempty"`
 }
 
 type stringList []string
@@ -44,7 +50,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	flags := flag.NewFlagSet("ai-logfixer-v2", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	mode := flags.String("mode", "config", "Runtime V2 mode: config or truth")
+	mode := flags.String("mode", "config", "Runtime V2 mode: config, permissions, or truth")
 
 	serviceName := flags.String("service", "goravel-demo", "service name to investigate")
 	baseURL := flags.String("base-url", "http://127.0.0.1:8090", "demo app base URL")
@@ -60,6 +66,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	verifyURL := flags.String("verify-url", "", "URL to verify after patch; defaults to base-url + route")
 	expectedStatus := flags.Int("expected-status", 200, "expected HTTP status from verify-url after patch")
 	errorThreshold := flags.Int("threshold", 3, "minimum repeated failure count required to start remediation")
+	targetDir := flags.String("target", "", "target app directory for filesystem remediation modes")
+	apply := flags.Bool("apply", false, "apply filesystem remediation instead of dry-run planning")
 
 	framework := flags.String("framework", "go", "framework name for truth recovery")
 	environment := flags.String("environment", string(truth.EnvironmentUnknown), "truth recovery environment: production, staging, local, or unknown")
@@ -92,6 +100,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			verifyURL:        *verifyURL,
 			expectedStatus:   *expectedStatus,
 			errorThreshold:   *errorThreshold,
+		})
+	case "permissions":
+		result, err = runPermissionsMode(permissionInput{
+			serviceName:    *serviceName,
+			targetDir:      *targetDir,
+			framework:      *framework,
+			verifyURL:      *verifyURL,
+			expectedStatus: *expectedStatus,
+			apply:          *apply,
 		})
 	case "truth":
 		result, err = runTruthMode(truthInput{
@@ -205,6 +222,41 @@ func hasRuntimeV2Result(result runtimev2.Result) bool {
 		result.Attempt.ID != "" ||
 		result.Receipt.ID != "" ||
 		result.BackupPath != ""
+}
+
+type permissionInput struct {
+	serviceName    string
+	targetDir      string
+	framework      string
+	verifyURL      string
+	expectedStatus int
+	apply          bool
+}
+
+func runPermissionsMode(input permissionInput) (output, error) {
+	result, err := permissions.Run(context.Background(), permissions.Options{
+		ServiceName:    input.serviceName,
+		TargetDir:      input.targetDir,
+		Framework:      input.framework,
+		VerifyURL:      input.verifyURL,
+		ExpectedStatus: input.expectedStatus,
+		Apply:          input.apply,
+	})
+	if err != nil {
+		return output{}, err
+	}
+	return output{
+		InvestigationRequest: &result.InvestigationRequest,
+		Diagnosis:            &result.Diagnosis,
+		RemediationPlan:      &result.RemediationPlan,
+		Attempt:              &result.Attempt,
+		Receipt:              &result.Receipt,
+		Framework:            result.Framework,
+		PermissionPolicy:     &result.Policy,
+		PermissionFindings:   result.Findings,
+		PermissionOperations: result.Operations,
+		RollbackPath:         result.RollbackPath,
+	}, nil
 }
 
 type truthInput struct {
