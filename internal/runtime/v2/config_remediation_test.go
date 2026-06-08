@@ -382,6 +382,68 @@ func TestRuntimeV2VerificationFailureRestoresConfig(t *testing.T) {
 	}
 }
 
+func TestRuntimeV2RunsConfigPatchHookBeforeVerification(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	configPath := filepath.Join(workDir, "host", "app.json")
+	containerConfigPath := filepath.Join(workDir, "container", "app.json")
+	logPath := filepath.Join(workDir, "app.log")
+	originalURL := "http://127.0.0.1:1/payments"
+	for _, path := range []string{configPath, containerConfigPath} {
+		writeJSONFile(t, path, map[string]any{
+			"dependencies": map[string]any{
+				"payment_url": originalURL,
+			},
+		})
+	}
+
+	server := httptest.NewServer(newCheckoutHandler(containerConfigPath, logPath))
+	t.Cleanup(server.Close)
+	for i := 0; i < 2; i++ {
+		response, err := http.Get(server.URL + "/checkout")
+		if err != nil {
+			t.Fatalf("request broken checkout endpoint: %v", err)
+		}
+		_ = response.Body.Close()
+	}
+
+	hookCalled := false
+	result, err := runtimev2.Run(context.Background(), runtimev2.Options{
+		ServiceName:      "checkout-api",
+		LogPath:          logPath,
+		ConfigPath:       configPath,
+		Method:           http.MethodGet,
+		Route:            "/checkout",
+		StatusClass:      http.StatusInternalServerError,
+		ConfigKeyPath:    "dependencies.payment_url",
+		ReplacementValue: server.URL + "/upstream/payment",
+		VerifyURL:        server.URL + "/checkout",
+		ExpectedStatus:   http.StatusOK,
+		ErrorThreshold:   1,
+		AfterConfigPatch: func(ctx context.Context, patch runtimev2.ConfigPatch) error {
+			hookCalled = true
+			if patch.ConfigPath != configPath || patch.ConfigKeyPath != "dependencies.payment_url" {
+				t.Fatalf("unexpected patch descriptor: %+v", patch)
+			}
+			raw, err := os.ReadFile(patch.ConfigPath)
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(containerConfigPath, raw, 0o644)
+		},
+	})
+	if err != nil {
+		t.Fatalf("run Runtime V2 with patch hook: %v", err)
+	}
+	if !hookCalled {
+		t.Fatal("expected config patch hook to run")
+	}
+	if result.RemediationPlan.Status != contractsv1.RemediationStatusSucceeded {
+		t.Fatalf("expected succeeded remediation plan, got %s", result.RemediationPlan.Status)
+	}
+}
+
 func TestRuntimeV2BelowThresholdDoesNotRemediate(t *testing.T) {
 	t.Parallel()
 
