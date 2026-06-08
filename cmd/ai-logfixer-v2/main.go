@@ -108,19 +108,39 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	if err != nil {
+		if hasStructuredOutput(result) {
+			if encodeErr := encodeOutput(stdout, result); encodeErr != nil {
+				fmt.Fprintf(stderr, "encode result: %v\n", encodeErr)
+				return 1
+			}
+		}
 		fmt.Fprintf(stderr, "run Runtime V2: %v\n", err)
 		return 1
 	}
 
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(result); err != nil {
+	if err := encodeOutput(stdout, result); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
 		return 1
 	}
 
 	fmt.Fprintf(stderr, "Runtime V2 %s completed\n", strings.ToLower(strings.TrimSpace(*mode)))
 	return 0
+}
+
+func encodeOutput(stdout io.Writer, result output) error {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func hasStructuredOutput(result output) bool {
+	return result.InvestigationRequest != nil ||
+		result.Diagnosis != nil ||
+		result.RemediationPlan != nil ||
+		result.Attempt != nil ||
+		result.Receipt != nil ||
+		result.BackupPath != "" ||
+		result.TruthRecovery != nil
 }
 
 type runtimeConfigInput struct {
@@ -161,17 +181,30 @@ func runConfigMode(input runtimeConfigInput) (output, error) {
 		VerifyURL:        input.verifyURL,
 		ExpectedStatus:   input.expectedStatus,
 	})
-	if err != nil {
-		return output{}, err
-	}
-	return output{
+	out := output{
 		InvestigationRequest: &result.InvestigationRequest,
 		Diagnosis:            &result.Diagnosis,
 		RemediationPlan:      &result.RemediationPlan,
 		Attempt:              &result.Attempt,
 		Receipt:              &result.Receipt,
 		BackupPath:           result.BackupPath,
-	}, nil
+	}
+	if err != nil {
+		if !hasRuntimeV2Result(result) {
+			return output{}, err
+		}
+		return out, err
+	}
+	return out, nil
+}
+
+func hasRuntimeV2Result(result runtimev2.Result) bool {
+	return result.InvestigationRequest.ID != "" ||
+		result.Diagnosis.ID != "" ||
+		result.RemediationPlan.ID != "" ||
+		result.Attempt.ID != "" ||
+		result.Receipt.ID != "" ||
+		result.BackupPath != ""
 }
 
 type truthInput struct {
