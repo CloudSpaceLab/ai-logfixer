@@ -55,6 +55,7 @@ The current repo is intentionally contract-first. Runtime work should now conver
 - [Durable workflow architecture](docs/architecture/durable-workflow-architecture.md) describes the target system of record, workflow state machine, framework adapter boundary, remediation runtime, and DB shape.
 - [Runtime V2 truth recovery](docs/v2/runtime-truth-recovery.md) describes the active runtime architecture for recovering real errors, detecting suppression sites, redacting evidence, and preparing guarded fix bundles.
 - [Incident evidence intake](docs/v2/incident-evidence-intake.md) describes the small generic intake package for normalizing logs, probes, config snapshots, manifests, permissions, dependencies, services, and process metadata before resolver handoff.
+- [Environment variable diagnostics](docs/v2/env-var-diagnostics.md) describes the safe Runtime V2 env-var drift MVP for missing variable detection, secret blocking, and explicit non-secret default writes.
 - [Phase 1 progress and architecture review](docs/reviews/phase-1-progress-and-architecture-review.md) maps the current codebase, open issues, PRs, biggest gaps, and recommended next step.
 - [Live scenario validation](docs/reviews/live-scenario-validation-2026-05-26.md) records real local Runtime V2/Goravel runs and evaluates public log/error corpora for future fixtures.
 - `internal/domain` centralizes allowed investigation, remediation, and approval state transitions.
