@@ -34,12 +34,21 @@ type Options struct {
 	ReplacementValue string
 	VerifyURL        string
 	ExpectedStatus   int
+	AfterConfigPatch ConfigPatchHook
 
 	WorkflowService        *workflow.Service
 	WorkflowTenantID       string
 	WorkflowActorID        string
 	WorkflowCorrelationID  string
 	WorkflowSuppressOutbox bool
+}
+
+type ConfigPatchHook func(context.Context, ConfigPatch) error
+
+type ConfigPatch struct {
+	ConfigPath       string
+	ConfigKeyPath    string
+	ReplacementValue string
 }
 
 type Result struct {
@@ -119,6 +128,17 @@ func Run(ctx context.Context, options Options) (Result, error) {
 	}
 	if err := writeJSONConfig(options.ConfigPath, document); err != nil {
 		return Result{}, fmt.Errorf("apply config patch: %w", recordRemediationPlanFailure(ctx, options, remediationPlan.ID, err, "Config remediation patch failed"))
+	}
+	if options.AfterConfigPatch != nil {
+		patch := ConfigPatch{
+			ConfigPath:       options.ConfigPath,
+			ConfigKeyPath:    options.ConfigKeyPath,
+			ReplacementValue: options.ReplacementValue,
+		}
+		if err := options.AfterConfigPatch(ctx, patch); err != nil {
+			_ = restoreBackup(options.ConfigPath, backupPath)
+			return Result{}, fmt.Errorf("run post-config-patch hook: %w", recordRemediationPlanFailure(ctx, options, remediationPlan.ID, err, "Config remediation post-patch hook failed"))
+		}
 	}
 
 	attempt := buildAttempt(options, signal, remediationPlan.ID)

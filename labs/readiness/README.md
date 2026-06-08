@@ -41,7 +41,10 @@ Benchmark mode is expected to fail today without `AI_LOGFIXER_CANDIDATE_COMMAND`
 Set `AI_LOGFIXER_CANDIDATE_COMMAND` to run a real resolver. The lab runs it concurrently once per scenario.
 
 ```bash
-AI_LOGFIXER_CANDIDATE_COMMAND='ai-logfixer resolve --input "$AI_LOGFIXER_CANDIDATE_INPUT"' \
+mkdir -p tmp
+go build -o tmp/ai-logfixer-readiness-resolve ./cmd/ai-logfixer-readiness-resolve
+
+AI_LOGFIXER_CANDIDATE_COMMAND='./tmp/ai-logfixer-readiness-resolve --input "$AI_LOGFIXER_CANDIDATE_INPUT"' \
   labs/readiness/bin/run-docker-lab.sh --mode benchmark
 ```
 
@@ -63,6 +66,8 @@ Each candidate process receives:
 | `AI_LOGFIXER_LIVE_PROBE_URL` | Endpoint that must recover |
 
 The candidate must remediate the copied lab workspace or running copied containers. It must not modify the source fixtures in the repository.
+
+`ai-logfixer-readiness-resolve` currently supports `config-drift` by routing the candidate input through Runtime V2 config remediation. It reads the scenario policy, patches only the first allowlisted config key from the first trusted source, verifies the live probe, and emits structured JSON. Other lanes emit a structured `unsupported` response and do not attempt remediation on `main`.
 
 ## Artifacts
 

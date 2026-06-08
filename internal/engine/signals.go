@@ -124,6 +124,10 @@ func ParseKeyValueHTTPLogs(content string, source string) []HTTPLogEntry {
 		values := parseKeyValues(line)
 		status, _ := strconv.Atoi(values["status"])
 		if status == 0 {
+			entry, ok := parseCommonAccessLog(line, source)
+			if ok {
+				entries = append(entries, entry)
+			}
 			continue
 		}
 		timestamp := parseLineTimestamp(line)
@@ -138,6 +142,29 @@ func ParseKeyValueHTTPLogs(content string, source string) []HTTPLogEntry {
 		})
 	}
 	return entries
+}
+
+func parseCommonAccessLog(line string, source string) (HTTPLogEntry, bool) {
+	re := regexp.MustCompile(`"([A-Za-z]+)\s+([^"\s]+)\s+HTTP/[0-9.]+"\s+(\d{3})`)
+	match := re.FindStringSubmatch(line)
+	if match == nil {
+		return HTTPLogEntry{}, false
+	}
+	status, err := strconv.Atoi(match[3])
+	if err != nil || status == 0 {
+		return HTTPLogEntry{}, false
+	}
+	route := match[2]
+	if beforeQuery, _, ok := strings.Cut(route, "?"); ok {
+		route = beforeQuery
+	}
+	return HTTPLogEntry{
+		Method: strings.ToUpper(match[1]),
+		Route:  route,
+		Status: status,
+		Source: source,
+		Raw:    line,
+	}, true
 }
 
 func RepeatedHTTPFailures(entries []HTTPLogEntry, threshold FailureThreshold) []IncidentSignal {
