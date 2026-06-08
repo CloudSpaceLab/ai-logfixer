@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -276,6 +277,48 @@ func TestRuntimeV2MissingConfigPatchDescriptorEscalatesWithoutWriting(t *testing
 	}
 }
 
+func TestRuntimeV2NonConfigEvidenceEscalatesWithoutApplyingDescriptor(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	configPath := filepath.Join(workDir, "app.json")
+	logPath := filepath.Join(workDir, "app.log")
+	original := map[string]any{"upstream_url": "http://127.0.0.1:1/orders"}
+	writeJSONFile(t, configPath, original)
+	writeRepeatedFamilyFailures(t, logPath, "checkout-api", "/checkout", "permission_drift", 4)
+
+	result, err := runtimev2.Run(context.Background(), runtimev2.Options{
+		ServiceName:      "checkout-api",
+		LogPath:          logPath,
+		ConfigPath:       configPath,
+		Route:            "/checkout",
+		StatusCode:       http.StatusServiceUnavailable,
+		ConfigKeyPath:    "upstream_url",
+		ReplacementValue: "http://127.0.0.1:8090/upstream/orders",
+		VerifyURL:        "http://127.0.0.1:8090/checkout",
+		ErrorThreshold:   3,
+		Now:              time.Date(2026, 5, 22, 12, 30, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("expected blocked result without error, got %v", err)
+	}
+	if result.RemediationPlan.Status != contractsv1.RemediationStatusEscalated || result.RemediationPlan.RiskLevel != contractsv1.SafetyBlocked {
+		t.Fatalf("expected non-config evidence to block remediation, got %+v", result.RemediationPlan)
+	}
+	if result.Attempt.Status != contractsv1.RemediationStatusEscalated || result.Receipt.Outcome != "escalated" {
+		t.Fatalf("expected escalated attempt and receipt, got attempt=%s receipt=%s", result.Attempt.Status, result.Receipt.Outcome)
+	}
+	if !strings.Contains(result.RemediationPlan.UserMessage, "permission_drift") {
+		t.Fatalf("expected block reason to include evidence family, got %q", result.RemediationPlan.UserMessage)
+	}
+	if result.BackupPath != "" {
+		t.Fatalf("blocked remediation should not create a backup, got %s", result.BackupPath)
+	}
+	if readJSONFile(t, configPath)["upstream_url"] != original["upstream_url"] {
+		t.Fatal("blocked remediation changed the config file")
+	}
+}
+
 func TestRuntimeV2VerificationFailureRestoresConfig(t *testing.T) {
 	t.Parallel()
 
@@ -300,7 +343,7 @@ func TestRuntimeV2VerificationFailureRestoresConfig(t *testing.T) {
 		_ = response.Body.Close()
 	}
 
-	_, err := runtimev2.Run(context.Background(), runtimev2.Options{
+	result, err := runtimev2.Run(context.Background(), runtimev2.Options{
 		ServiceName:      "checkout-api",
 		LogPath:          logPath,
 		ConfigPath:       configPath,
@@ -316,6 +359,21 @@ func TestRuntimeV2VerificationFailureRestoresConfig(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected verification failure")
+	}
+	if result.RemediationPlan.Status != contractsv1.RemediationStatusFailed {
+		t.Fatalf("expected failed remediation plan, got %+v", result.RemediationPlan)
+	}
+	if result.Attempt.Status != contractsv1.RemediationStatusFailed {
+		t.Fatalf("expected failed remediation attempt, got %+v", result.Attempt)
+	}
+	if result.Attempt.MonitorSummary.Status != "rolled_back" {
+		t.Fatalf("expected rolled-back monitor summary, got %+v", result.Attempt.MonitorSummary)
+	}
+	if result.Receipt.Outcome != "failed_rolled_back" {
+		t.Fatalf("expected failed rollback receipt, got %+v", result.Receipt)
+	}
+	if result.BackupPath == "" {
+		t.Fatal("expected failed result to include backup path")
 	}
 	config := readJSONFile(t, configPath)
 	dependencies := config["dependencies"].(map[string]any)
@@ -389,11 +447,29 @@ func writeRepeatedKVFailures(t *testing.T, path string, service string, route st
 	}
 }
 
+func writeRepeatedFamilyFailures(t *testing.T, path string, service string, route string, family string, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		appendTestLogWithFields(path, service, http.MethodGet, route, http.StatusServiceUnavailable, map[string]string{
+			"family": family,
+			"error":  "permission denied writing runtime path",
+		})
+	}
+}
+
 func appendTestLog(path string, service string, method string, route string, status int) {
+	appendTestLogWithFields(path, service, method, route, status, nil)
+}
+
+func appendTestLogWithFields(path string, service string, method string, route string, status int, fields map[string]string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
-	line := time.Now().UTC().Format(time.RFC3339Nano) + " level=error service=" + service + " method=" + method + " route=" + route + " status=" + intString(status) + "\n"
+	line := time.Now().UTC().Format(time.RFC3339Nano) + " level=error service=" + service + " method=" + method + " route=" + route + " status=" + intString(status)
+	for key, value := range fields {
+		line += " " + key + "=" + strconv.Quote(value)
+	}
+	line += "\n"
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return

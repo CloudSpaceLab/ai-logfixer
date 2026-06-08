@@ -65,6 +65,72 @@ func TestRunConfigModeAppliesRuntimeV2Remediation(t *testing.T) {
 	}
 }
 
+func TestRunConfigModeVerificationFailureEmitsStructuredJSON(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	configPath := filepath.Join(workDir, "app.json")
+	logPath := filepath.Join(workDir, "app.log")
+	originalUpstream := "http://127.0.0.1:1/orders"
+	if err := demoapp.WriteConfig(configPath, demoapp.Config{
+		ServiceName: "goravel-demo",
+		UpstreamURL: originalUpstream,
+	}); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	server := httptest.NewServer(demoapp.NewHandler(configPath, logPath))
+	t.Cleanup(server.Close)
+	for i := 0; i < 4; i++ {
+		response, err := http.Get(server.URL + "/orders")
+		if err != nil {
+			t.Fatalf("request broken route: %v", err)
+		}
+		_ = response.Body.Close()
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{
+		"-mode", "config",
+		"-service", "goravel-demo",
+		"-base-url", server.URL,
+		"-config", configPath,
+		"-log", logPath,
+		"-route", "/orders",
+		"-status", "503",
+		"-config-key", "upstream_url",
+		"-replacement-value", server.URL + "/upstream/orders",
+		"-expected-status", "201",
+		"-threshold", "3",
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	var result output
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode failure output: %v\n%s", err, stdout.String())
+	}
+	if result.RemediationPlan == nil || result.RemediationPlan.Status != contractsv1.RemediationStatusFailed {
+		t.Fatalf("expected failed remediation plan, got %+v", result.RemediationPlan)
+	}
+	if result.Attempt == nil || result.Attempt.Status != contractsv1.RemediationStatusFailed {
+		t.Fatalf("expected failed remediation attempt, got %+v", result.Attempt)
+	}
+	if result.Receipt == nil || result.Receipt.Outcome != "failed_rolled_back" {
+		t.Fatalf("expected failed rollback receipt, got %+v", result.Receipt)
+	}
+	if !strings.Contains(stderr.String(), "verify fix") {
+		t.Fatalf("expected verification error on stderr, got %q", stderr.String())
+	}
+	restored, err := demoapp.ReadConfig(configPath)
+	if err != nil {
+		t.Fatalf("read restored config: %v", err)
+	}
+	if restored.UpstreamURL != originalUpstream {
+		t.Fatalf("expected rollback to restore upstream %q, got %q", originalUpstream, restored.UpstreamURL)
+	}
+}
+
 func TestRunTruthModeStackTraceOutputsFixBundle(t *testing.T) {
 	t.Parallel()
 
