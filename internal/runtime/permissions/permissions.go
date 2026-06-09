@@ -19,7 +19,14 @@ import (
 
 const (
 	frameworkAuto    = "auto"
+	frameworkExpress = "express"
+	frameworkFastAPI = "fastapi"
+	frameworkFlask   = "flask"
+	frameworkGo      = "go"
+	frameworkJava    = "java"
 	frameworkLaravel = "laravel"
+	frameworkRails   = "rails"
+	frameworkRuby    = "ruby"
 )
 
 type Options struct {
@@ -212,13 +219,52 @@ func resolveFramework(options Options) (string, error) {
 	if fileExists(filepath.Join(options.TargetDir, "artisan")) && fileExists(filepath.Join(options.TargetDir, "composer.json")) {
 		return frameworkLaravel, nil
 	}
+	if fileContainsAny(filepath.Join(options.TargetDir, "Gemfile"), "rails") || fileExists(filepath.Join(options.TargetDir, "config", "application.rb")) {
+		return frameworkRails, nil
+	}
+	if fileContainsAny(filepath.Join(options.TargetDir, "package.json"), "express") {
+		return frameworkExpress, nil
+	}
+	if fileContainsAny(filepath.Join(options.TargetDir, "requirements.txt"), "fastapi") ||
+		fileContainsAny(filepath.Join(options.TargetDir, "pyproject.toml"), "fastapi") {
+		return frameworkFastAPI, nil
+	}
+	if fileContainsAny(filepath.Join(options.TargetDir, "requirements.txt"), "flask") ||
+		fileContainsAny(filepath.Join(options.TargetDir, "pyproject.toml"), "flask") {
+		return frameworkFlask, nil
+	}
+	if fileExists(filepath.Join(options.TargetDir, "go.mod")) {
+		return frameworkGo, nil
+	}
+	if fileExists(filepath.Join(options.TargetDir, "pom.xml")) ||
+		fileExists(filepath.Join(options.TargetDir, "build.gradle")) ||
+		fileExists(filepath.Join(options.TargetDir, "build.gradle.kts")) {
+		return frameworkJava, nil
+	}
+	if fileExists(filepath.Join(options.TargetDir, "Gemfile")) {
+		return frameworkRuby, nil
+	}
 	return "", errors.New("no supported framework markers found")
 }
 
 func policyForFramework(framework string) (PermissionPolicy, error) {
 	switch strings.ToLower(strings.TrimSpace(framework)) {
+	case frameworkExpress:
+		return expressPolicy(), nil
+	case frameworkFastAPI:
+		return pythonPolicy(frameworkFastAPI, "FastAPI writable runtime directories"), nil
+	case frameworkFlask:
+		return pythonPolicy(frameworkFlask, "Flask writable runtime directories"), nil
+	case frameworkGo:
+		return goPolicy(), nil
+	case frameworkJava:
+		return javaPolicy(), nil
 	case frameworkLaravel:
 		return laravelPolicy(), nil
+	case frameworkRails:
+		return railsPolicy(), nil
+	case frameworkRuby:
+		return rubyPolicy(), nil
 	default:
 		return PermissionPolicy{}, fmt.Errorf("unsupported framework %q for permission remediation", framework)
 	}
@@ -243,6 +289,74 @@ func laravelPolicy() PermissionPolicy {
 		},
 		References: []PolicyReference{
 			{Title: "Laravel directory permissions", Source: "local Laravel framework policy"},
+		},
+	}
+}
+
+func expressPolicy() PermissionPolicy {
+	return basePolicy(frameworkExpress, "Express writable runtime directories", []ExpectedPath{
+		{RelativePath: "logs", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "uploads", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: ".cache", Kind: "dir", Mode: 0o775, Writable: true},
+	})
+}
+
+func pythonPolicy(framework string, name string) PermissionPolicy {
+	return basePolicy(framework, name, []ExpectedPath{
+		{RelativePath: "instance", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "logs", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "uploads", Kind: "dir", Mode: 0o775, Writable: true},
+	})
+}
+
+func goPolicy() PermissionPolicy {
+	return basePolicy(frameworkGo, "Go service writable runtime directories", []ExpectedPath{
+		{RelativePath: "data", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "logs", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp", Kind: "dir", Mode: 0o775, Writable: true},
+	})
+}
+
+func javaPolicy() PermissionPolicy {
+	return basePolicy(frameworkJava, "Java service writable runtime directories", []ExpectedPath{
+		{RelativePath: "logs", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "uploads", Kind: "dir", Mode: 0o775, Writable: true},
+	})
+}
+
+func railsPolicy() PermissionPolicy {
+	return basePolicy(frameworkRails, "Rails writable runtime directories", []ExpectedPath{
+		{RelativePath: "log", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "storage", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp/cache", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "public/assets", Kind: "dir", Mode: 0o775, Writable: true},
+	})
+}
+
+func rubyPolicy() PermissionPolicy {
+	return basePolicy(frameworkRuby, "Ruby service writable runtime directories", []ExpectedPath{
+		{RelativePath: "log", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "storage", Kind: "dir", Mode: 0o775, Writable: true},
+		{RelativePath: "tmp", Kind: "dir", Mode: 0o775, Writable: true},
+	})
+}
+
+func basePolicy(framework string, name string, expected []ExpectedPath) PermissionPolicy {
+	return PermissionPolicy{
+		Framework:      framework,
+		Name:           name,
+		ForbiddenModes: []string{"0777"},
+		ForbiddenAction: []string{
+			"chmod_777",
+			"recursive_root_change_outside_allowlist",
+		},
+		ExpectedPaths: expected,
+		References: []PolicyReference{
+			{Title: name, Source: "local framework permission policy"},
 		},
 	}
 }
@@ -797,6 +911,20 @@ func validateResult(result Result) error {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func fileContainsAny(path string, needles ...string) bool {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	content := strings.ToLower(string(raw))
+	for _, needle := range needles {
+		if strings.Contains(content, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
 }
 
 func modeString(mode os.FileMode) string {

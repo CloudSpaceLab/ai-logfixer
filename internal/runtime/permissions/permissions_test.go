@@ -62,6 +62,110 @@ func TestRunDryRunPlansLaravelStoragePermissionRepairWithoutMutating(t *testing.
 	}
 }
 
+func TestRunAutoDetectsCommonFrameworkPermissionPolicies(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		framework    string
+		markers      map[string]string
+		expectedPath string
+	}{
+		{
+			name:      "express",
+			framework: "express",
+			markers: map[string]string{
+				"package.json": `{"dependencies":{"express":"^4.18.0"}}` + "\n",
+			},
+			expectedPath: "uploads",
+		},
+		{
+			name:      "fastapi",
+			framework: "fastapi",
+			markers: map[string]string{
+				"requirements.txt": "fastapi==0.115.0\nuvicorn==0.30.0\n",
+			},
+			expectedPath: "instance",
+		},
+		{
+			name:      "flask",
+			framework: "flask",
+			markers: map[string]string{
+				"pyproject.toml": "[project]\ndependencies = [\"flask\"]\n",
+			},
+			expectedPath: "instance",
+		},
+		{
+			name:      "go",
+			framework: "go",
+			markers: map[string]string{
+				"go.mod": "module example.com/orders\n\ngo 1.23\n",
+			},
+			expectedPath: "data",
+		},
+		{
+			name:      "java",
+			framework: "java",
+			markers: map[string]string{
+				"pom.xml": "<project><modelVersion>4.0.0</modelVersion></project>\n",
+			},
+			expectedPath: "logs",
+		},
+		{
+			name:      "rails",
+			framework: "rails",
+			markers: map[string]string{
+				"Gemfile":               "source 'https://rubygems.org'\ngem 'rails'\n",
+				"config/application.rb": "module Orders\n  class Application < Rails::Application\n  end\nend\n",
+			},
+			expectedPath: "tmp/cache",
+		},
+		{
+			name:      "ruby",
+			framework: "ruby",
+			markers: map[string]string{
+				"Gemfile": "source 'https://rubygems.org'\ngem 'sinatra'\n",
+			},
+			expectedPath: "storage",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			appDir := newPolicyApp(t, tc.markers)
+			result, err := permissions.Run(context.Background(), permissions.Options{
+				ServiceName: "orders-api",
+				TargetDir:   appDir,
+				Framework:   "auto",
+				Apply:       false,
+				Now:         fixedTime(),
+			})
+			if err != nil {
+				t.Fatalf("run permission resolver: %v", err)
+			}
+
+			if result.Framework != tc.framework {
+				t.Fatalf("expected framework %q, got %q", tc.framework, result.Framework)
+			}
+			if result.Policy.Framework != tc.framework {
+				t.Fatalf("expected policy framework %q, got %q", tc.framework, result.Policy.Framework)
+			}
+			if !policyHasPath(result.Policy, tc.expectedPath) {
+				t.Fatalf("expected policy for %s to include %s, got %+v", tc.framework, tc.expectedPath, result.Policy.ExpectedPaths)
+			}
+			if !operationForPath(result.Operations, tc.expectedPath) {
+				t.Fatalf("expected dry-run operation for missing path %s, got %+v", tc.expectedPath, result.Operations)
+			}
+			if _, err := os.Stat(filepath.Join(appDir, tc.expectedPath)); !os.IsNotExist(err) {
+				t.Fatalf("dry-run should not create %s; stat error=%v", tc.expectedPath, err)
+			}
+		})
+	}
+}
+
 func TestRunAppliesMinimalLaravelPermissionRepairAndVerifies(t *testing.T) {
 	t.Parallel()
 
@@ -224,6 +328,33 @@ func newLaravelApp(t *testing.T) string {
 		}
 	}
 	return root
+}
+
+func newPolicyApp(t *testing.T, markers map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for path, content := range markers {
+		writeFile(t, filepath.Join(root, path), content)
+	}
+	return root
+}
+
+func policyHasPath(policy permissions.PermissionPolicy, path string) bool {
+	for _, expected := range policy.ExpectedPaths {
+		if expected.RelativePath == path {
+			return true
+		}
+	}
+	return false
+}
+
+func operationForPath(operations []permissions.PermissionOperation, path string) bool {
+	for _, operation := range operations {
+		if operation.RelativePath == path {
+			return true
+		}
+	}
+	return false
 }
 
 func writeFile(t *testing.T, path string, content string) {
