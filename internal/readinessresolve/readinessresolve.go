@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	contractsv1 "github.com/CloudSpaceLab/ai-logfixer/internal/contracts/v1"
+	packagerollback "github.com/CloudSpaceLab/ai-logfixer/internal/resolvers/packages"
 	runtimev2 "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/v2"
 )
 
@@ -107,6 +111,12 @@ func Resolve(ctx context.Context, input CandidateInput) (Response, error) {
 	switch normalizeLane(input.OperationalLane) {
 	case "config-drift":
 		return resolveConfigDrift(ctx, input)
+	case "package-regression":
+		return resolvePackageRegression(ctx, input)
+	case "permission-drift":
+		return resolvePermissionDrift(ctx, input)
+	case "restart-reload":
+		return resolveRestartReload(ctx, input)
 	default:
 		return unsupportedResponse(input), nil
 	}
@@ -150,6 +160,35 @@ type configPolicy struct {
 	AllowedKeys    []string           `json:"allowed_keys"`
 	TrustedSources []string           `json:"trusted_sources"`
 	Verification   policyVerification `json:"verification"`
+}
+
+type packagePolicy struct {
+	Lane            string             `json:"lane"`
+	AllowedFiles    []string           `json:"allowed_files"`
+	AllowedPackages []string           `json:"allowed_packages"`
+	TrustedSources  []string           `json:"trusted_sources"`
+	Verification    policyVerification `json:"verification"`
+}
+
+type packageHistory struct {
+	Package       string `json:"package"`
+	LastKnownGood string `json:"last_known_good"`
+	Current       string `json:"current"`
+}
+
+type permissionPolicy struct {
+	Lane          string             `json:"lane"`
+	AllowedPaths  []string           `json:"allowed_paths"`
+	ExpectedOwner string             `json:"expected_owner"`
+	ExpectedGroup string             `json:"expected_group"`
+	ExpectedMode  string             `json:"expected_mode"`
+	Verification  policyVerification `json:"verification"`
+}
+
+type restartPolicy struct {
+	Lane                  string             `json:"lane"`
+	AllowedRestartTargets []string           `json:"allowed_restart_targets"`
+	Verification          policyVerification `json:"verification"`
 }
 
 type policyVerification struct {
@@ -211,6 +250,104 @@ func resolveConfigDrift(ctx context.Context, input CandidateInput) (Response, er
 	return response, nil
 }
 
+func resolvePackageRegression(ctx context.Context, input CandidateInput) (Response, error) {
+	policy, err := loadPackagePolicy(input.PolicyFile)
+	if err != nil {
+		return Response{}, err
+	}
+	packageFile, err := joinInsideApp(input.AppDir, policy.AllowedFiles[0])
+	if err != nil {
+		return Response{}, fmt.Errorf("resolve package file: %w", err)
+	}
+	historyPath, err := joinInsideApp(input.AppDir, policy.TrustedSources[0])
+	if err != nil {
+		return Response{}, fmt.Errorf("resolve package history: %w", err)
+	}
+	history, err := loadPackageHistory(historyPath)
+	if err != nil {
+		return Response{}, err
+	}
+	if !containsString(policy.AllowedPackages, history.Package) {
+		return Response{}, fmt.Errorf("package %q is not allowlisted by policy", history.Package)
+	}
+
+	verifyURL := firstNonEmpty(input.LiveProbeURL, policy.Verification.URL)
+	expectedStatus := firstNonZero(input.ExpectedFixedStatus, policy.Verification.ExpectedStatus, http.StatusOK)
+	options := packagerollback.Options{
+		PackageFile:    packageFile,
+		PackageName:    history.Package,
+		CurrentSpec:    history.Current,
+		KnownGoodSpec:  history.LastKnownGood,
+		VerifyURL:      verifyURL,
+		ExpectedStatus: expectedStatus,
+		WorkingDir:     input.AppDir,
+	}
+	if hasDockerTarget(input) {
+		options.VerifyURL = ""
+		options.VerifyCommand = dockerPackageVerifyCommand(input, packageFile, verifyURL, expectedStatus, firstNonEmpty(input.FixedBodyContains, policy.Verification.BodyContains))
+	}
+	result, err := packagerollback.Rollback(ctx, options)
+	if err != nil {
+		return Response{}, err
+	}
+	response := baseResponse(input, StatusResolved, true, "package-regression resolver completed")
+	response.BackupPath = result.Rollback.BackupPath
+	return response, nil
+}
+
+func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response, error) {
+	policy, err := loadPermissionPolicy(input.PolicyFile)
+	if err != nil {
+		return Response{}, err
+	}
+	mode, err := strconv.ParseUint(strings.TrimPrefix(policy.ExpectedMode, "0"), 8, 32)
+	if err != nil {
+		return Response{}, fmt.Errorf("parse expected_mode: %w", err)
+	}
+	for _, relativePath := range policy.AllowedPaths {
+		if _, err := joinInsideApp(input.AppDir, relativePath); err != nil {
+			return Response{}, fmt.Errorf("resolve allowlisted permission path: %w", err)
+		}
+		if hasDockerTarget(input) {
+			if err := dockerRepairPermissions(ctx, input, relativePath, policy); err != nil {
+				return Response{}, err
+			}
+			continue
+		}
+		path, _ := joinInsideApp(input.AppDir, relativePath)
+		if err := os.Chmod(path, os.FileMode(mode)); err != nil {
+			return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
+		}
+	}
+	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
+		return Response{}, err
+	}
+	return baseResponse(input, StatusResolved, true, "permission-drift resolver completed"), nil
+}
+
+func resolveRestartReload(ctx context.Context, input CandidateInput) (Response, error) {
+	policy, err := loadRestartPolicy(input.PolicyFile)
+	if err != nil {
+		return Response{}, err
+	}
+	if !containsString(policy.AllowedRestartTargets, input.DockerService) {
+		return Response{}, fmt.Errorf("restart target %q is not allowlisted by policy", input.DockerService)
+	}
+	if !hasDockerTarget(input) {
+		return Response{}, errors.New("restart-reload readiness remediation requires compose file, project, and docker service")
+	}
+	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "restart", input.DockerService}
+	command := exec.CommandContext(ctx, "docker", args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return Response{}, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
+		return Response{}, err
+	}
+	return baseResponse(input, StatusResolved, true, "restart-reload resolver completed"), nil
+}
+
 func loadConfigPolicy(path string) (configPolicy, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
@@ -231,6 +368,84 @@ func loadConfigPolicy(path string) (configPolicy, error) {
 	}
 	if len(policy.TrustedSources) == 0 {
 		return configPolicy{}, errors.New("config-drift policy trusted_sources is required")
+	}
+	return policy, nil
+}
+
+func loadPackagePolicy(path string) (packagePolicy, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return packagePolicy{}, fmt.Errorf("read package-regression policy: %w", err)
+	}
+	var policy packagePolicy
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return packagePolicy{}, fmt.Errorf("decode package-regression policy: %w", err)
+	}
+	if normalizeLane(policy.Lane) != "package-regression" {
+		return packagePolicy{}, fmt.Errorf("policy lane %q does not match package-regression", policy.Lane)
+	}
+	if len(policy.AllowedFiles) == 0 {
+		return packagePolicy{}, errors.New("package-regression policy allowed_files is required")
+	}
+	if len(policy.AllowedPackages) == 0 {
+		return packagePolicy{}, errors.New("package-regression policy allowed_packages is required")
+	}
+	if len(policy.TrustedSources) == 0 {
+		return packagePolicy{}, errors.New("package-regression policy trusted_sources is required")
+	}
+	return policy, nil
+}
+
+func loadPackageHistory(path string) (packageHistory, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return packageHistory{}, fmt.Errorf("read package history: %w", err)
+	}
+	var history packageHistory
+	if err := json.Unmarshal(raw, &history); err != nil {
+		return packageHistory{}, fmt.Errorf("decode package history: %w", err)
+	}
+	if strings.TrimSpace(history.Package) == "" || strings.TrimSpace(history.Current) == "" || strings.TrimSpace(history.LastKnownGood) == "" {
+		return packageHistory{}, errors.New("package history requires package, current, and last_known_good")
+	}
+	return history, nil
+}
+
+func loadPermissionPolicy(path string) (permissionPolicy, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return permissionPolicy{}, fmt.Errorf("read permission-drift policy: %w", err)
+	}
+	var policy permissionPolicy
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return permissionPolicy{}, fmt.Errorf("decode permission-drift policy: %w", err)
+	}
+	if normalizeLane(policy.Lane) != "permission-drift" {
+		return permissionPolicy{}, fmt.Errorf("policy lane %q does not match permission-drift", policy.Lane)
+	}
+	if len(policy.AllowedPaths) == 0 {
+		return permissionPolicy{}, errors.New("permission-drift policy allowed_paths is required")
+	}
+	if strings.TrimSpace(policy.ExpectedMode) == "" {
+		return permissionPolicy{}, errors.New("permission-drift policy expected_mode is required")
+	}
+	return policy, nil
+}
+
+func loadRestartPolicy(path string) (restartPolicy, error) {
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return restartPolicy{}, fmt.Errorf("read restart-reload policy: %w", err)
+	}
+	var policy restartPolicy
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return restartPolicy{}, fmt.Errorf("decode restart-reload policy: %w", err)
+	}
+	if normalizeLane(policy.Lane) != "restart-reload" {
+		return restartPolicy{}, fmt.Errorf("policy lane %q does not match restart-reload", policy.Lane)
+	}
+	if len(policy.AllowedRestartTargets) == 0 {
+		return restartPolicy{}, errors.New("restart-reload policy allowed_restart_targets is required")
 	}
 	return policy, nil
 }
@@ -325,6 +540,136 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == strings.TrimSpace(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDockerTarget(input CandidateInput) bool {
+	return strings.TrimSpace(input.ComposeFile) != "" &&
+		strings.TrimSpace(input.ComposeProject) != "" &&
+		strings.TrimSpace(input.DockerService) != ""
+}
+
+func dockerRepairPermissions(ctx context.Context, input CandidateInput, relativePath string, policy permissionPolicy) error {
+	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(relativePath))
+	owner := firstNonEmpty(policy.ExpectedOwner, "app")
+	group := firstNonEmpty(policy.ExpectedGroup, owner)
+	script := fmt.Sprintf("chown -R %s:%s %s && chmod %s %s", shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(policy.ExpectedMode), shellQuote(containerPath))
+	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "exec", "-T", "-u", "root", input.DockerService, "sh", "-lc", script}
+	command := exec.CommandContext(ctx, "docker", args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func dockerPackageVerifyCommand(input CandidateInput, packageFile string, verifyURL string, expectedStatus int, bodyContains string) string {
+	compose := "docker compose -f " + shellQuote(input.ComposeFile) + " -p " + shellQuote(input.ComposeProject)
+	target := input.DockerService + ":/app/package.json"
+	steps := []string{
+		compose + " cp " + shellQuote(packageFile) + " " + shellQuote(target),
+		compose + " exec -T " + shellQuote(input.DockerService) + " npm install --omit=dev",
+		compose + " restart " + shellQuote(input.DockerService),
+		pythonHTTPVerifyCommand(verifyURL, expectedStatus, bodyContains),
+	}
+	return strings.Join(steps, " && ")
+}
+
+func pythonHTTPVerifyCommand(verifyURL string, expectedStatus int, bodyContains string) string {
+	code := strings.Join([]string{
+		"import sys,time,urllib.request,urllib.error",
+		"url=" + strconv.Quote(verifyURL),
+		"expected=" + strconv.Itoa(expectedStatus),
+		"needle=" + strconv.Quote(bodyContains),
+		"deadline=time.time()+20",
+		"last=''",
+		"status=0",
+		"body=''",
+		"while time.time()<deadline:",
+		"    try:",
+		"        r=urllib.request.urlopen(url, timeout=3); status=r.status; body=r.read().decode('utf-8','replace')",
+		"    except urllib.error.HTTPError as e:",
+		"        status=e.code; body=e.read().decode('utf-8','replace')",
+		"    except Exception as e:",
+		"        last=repr(e); time.sleep(1); continue",
+		"    if status==expected and (not needle or needle in body): sys.exit(0)",
+		"    last=f'status={status} body={body[:200]}'; time.sleep(1)",
+		"print(last, file=sys.stderr)",
+		"sys.exit(1)",
+	}, "\n")
+	return "python3 -c " + shellQuote(code)
+}
+
+func verifyLiveProbe(ctx context.Context, input CandidateInput, verification policyVerification) error {
+	verifyURL := firstNonEmpty(input.LiveProbeURL, verification.URL)
+	if verifyURL == "" {
+		return errors.New("live probe URL is required for verification")
+	}
+	expectedStatus := firstNonZero(input.ExpectedFixedStatus, verification.ExpectedStatus, http.StatusOK)
+	bodyContains := firstNonEmpty(input.FixedBodyContains, verification.BodyContains)
+	deadline := time.Now().Add(20 * time.Second)
+	var last string
+	for {
+		status, body, err := getHTTP(ctx, verifyURL)
+		if err == nil && status == expectedStatus && (bodyContains == "" || strings.Contains(body, bodyContains)) {
+			return nil
+		}
+		if err != nil {
+			last = err.Error()
+		} else {
+			last = fmt.Sprintf("status=%d body=%s", status, safeBody(body))
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("verify live probe %s failed: %s", verifyURL, last)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func getHTTP(ctx context.Context, verifyURL string) (int, string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, verifyURL, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return 0, "", err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 4096))
+	if err != nil {
+		return response.StatusCode, "", err
+	}
+	return response.StatusCode, string(raw), nil
+}
+
+func safeBody(body string) string {
+	body = strings.TrimSpace(body)
+	if len(body) > 200 {
+		return body[:200]
+	}
+	return body
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func dockerConfigSyncHook(input CandidateInput, relativePath string) runtimev2.ConfigPatchHook {

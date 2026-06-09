@@ -17,19 +17,19 @@ func TestRunReadsCandidateInputFile(t *testing.T) {
 	workDir := t.TempDir()
 	inputPath := filepath.Join(workDir, "candidate.json")
 	payload := map[string]any{
-		"scenario_id":           "restart-reload-api",
-		"operational_lane":      "restart-reload",
+		"scenario_id":           "unknown-api",
+		"operational_lane":      "unknown-lane",
 		"runtime":               "go",
 		"app_carrier":           "net-http",
-		"service_name":          "restart-reload-api",
-		"docker_service":        "restart-reload-api",
+		"service_name":          "unknown-api",
+		"docker_service":        "unknown-api",
 		"app_dir":               filepath.Join(workDir, "app"),
 		"policy_file":           filepath.Join(workDir, "policy.json"),
 		"trace_file":            filepath.Join(workDir, "trace.log"),
 		"live_probe_url":        "http://127.0.0.1:18084/orders/readiness",
 		"expected_fixed_status": http.StatusOK,
 		"fixed_body_contains":   "FIXED",
-		"safe_action":           "restart the smallest allowlisted service target",
+		"safe_action":           "structured unsupported response",
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestRunReadsCandidateInputFile(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {
 		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
 	}
-	if response.ScenarioID != "restart-reload-api" || response.Status != readinessresolve.StatusUnsupported {
+	if response.ScenarioID != "unknown-api" || response.Status != readinessresolve.StatusUnsupported {
 		t.Fatalf("unexpected response: %+v", response)
 	}
 }
