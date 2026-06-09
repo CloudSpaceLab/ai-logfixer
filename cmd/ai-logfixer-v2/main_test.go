@@ -280,6 +280,200 @@ func TestRunPermissionsModeAppliesLaravelPermissionRepair(t *testing.T) {
 	}
 }
 
+func TestRunEnvvarsModeAppliesNonSecretDefaultFromInputFile(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	envPath := filepath.Join(workDir, ".env")
+	result, stderr := runInputMode(t, "envvars", map[string]any{
+		"service_name":  "orders-api",
+		"env_file_path": envPath,
+		"apply":         true,
+		"environment":   map[string]string{},
+		"policy": map[string]any{
+			"variables": []map[string]any{
+				{"name": "CACHE_DRIVER", "required": true, "secret": false, "default_value": "file", "allow_default_write": true},
+			},
+		},
+	})
+
+	if _, ok := result["envvars"].(map[string]any); !ok {
+		t.Fatalf("expected envvars result, got %+v stderr=%s", result, stderr)
+	}
+	raw, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	if string(raw) != "CACHE_DRIVER=file\n" {
+		t.Fatalf("unexpected env contents: %q", string(raw))
+	}
+	if !strings.Contains(stderr, "Runtime V2 envvars completed") {
+		t.Fatalf("expected envvars completion message, got %q", stderr)
+	}
+}
+
+func TestRunDatabaseModeDiagnosesDriftFromInputFile(t *testing.T) {
+	t.Parallel()
+
+	result, _ := runInputMode(t, "database", map[string]any{
+		"service_name":      "orders-api",
+		"database_url":      "postgres://orders:secret@127.0.0.1:5432/wrongdb?sslmode=disable",
+		"allowed_schemes":   []string{"postgres"},
+		"allowed_hosts":     []string{"db.internal"},
+		"required_database": "orders",
+		"required_tables": []map[string]any{
+			{"name": "orders", "columns": []string{"id", "total_cents", "customer_id"}},
+		},
+		"observed_tables": []map[string]any{
+			{"name": "orders", "columns": []string{"id", "total_cents"}},
+		},
+		"connection_probe": map[string]any{"checked": true, "ok": false, "error": "password authentication failed"},
+	})
+
+	database, ok := result["database"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected database result, got %+v", result)
+	}
+	if database["status"] != "drift_detected" {
+		t.Fatalf("expected drift status, got %+v", database)
+	}
+	if strings.Contains(mustJSON(t, database), "secret") {
+		t.Fatalf("database output leaked credential: %+v", database)
+	}
+}
+
+func TestRunResourcesModeCreatesAllowlistedRuntimeDirectory(t *testing.T) {
+	t.Parallel()
+
+	appRoot := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	result, _ := runInputMode(t, "resources", map[string]any{
+		"app_root":           appRoot,
+		"resource_path":      "storage/framework/cache/data",
+		"allowlist":          []string{"storage/framework/cache/data"},
+		"kind":               "dir",
+		"mode":               488,
+		"verify_url":         server.URL,
+		"expected_status":    200,
+		"manifest_base_name": "resource-cli-test",
+	})
+
+	resource, ok := result["resource"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resource result, got %+v", result)
+	}
+	if resource["applied"] != true || resource["verified"] != true {
+		t.Fatalf("expected applied and verified resource result, got %+v", resource)
+	}
+	if _, err := os.Stat(filepath.Join(appRoot, "storage", "framework", "cache", "data")); err != nil {
+		t.Fatalf("expected runtime resource directory: %v", err)
+	}
+}
+
+func TestRunRestartModeRunsAllowlistedActionFromInputFile(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	stalePath := filepath.Join(workDir, "serving-stale-config")
+	logPath := filepath.Join(workDir, "orders.log")
+	restartScript := filepath.Join(workDir, "restart-orders.sh")
+	verifyScript := filepath.Join(workDir, "verify-orders.sh")
+	if err := os.WriteFile(stalePath, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+	writeRepeatedHTTPFailures(t, logPath, "orders-api", "/orders/readiness", 4)
+	writeExecutable(t, restartScript, "#!/bin/sh\nset -eu\nrm -f \"$1\"\n")
+	writeExecutable(t, verifyScript, "#!/bin/sh\nset -eu\nif [ -e \"$1\" ]; then exit 1; fi\nprintf 'runtime healthy after restart\\n'\n")
+
+	result, _ := runInputMode(t, "restart", map[string]any{
+		"service_name":    "orders-api",
+		"log_path":        logPath,
+		"route":           "/orders/readiness",
+		"status_code":     503,
+		"error_threshold": 3,
+		"action_name":     "restart-runtime",
+		"policy": map[string]any{
+			"allowed_actions": []map[string]any{
+				{
+					"name":         "restart-runtime",
+					"service_name": "orders-api",
+					"command":      map[string]any{"path": restartScript, "args": []string{stalePath}},
+				},
+			},
+		},
+		"verification": map[string]any{
+			"command": map[string]any{
+				"command":         map[string]any{"path": verifyScript, "args": []string{stalePath}},
+				"output_contains": "runtime healthy",
+			},
+		},
+	})
+
+	restart, ok := result["restart"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected restart result, got %+v", result)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("expected restart action to remove stale marker, stat err=%v", err)
+	}
+	if restart["receipt"] == nil {
+		t.Fatalf("expected restart receipt, got %+v", restart)
+	}
+}
+
+func TestRunTokensModeRedactsTokenEvidenceFromInputFile(t *testing.T) {
+	t.Parallel()
+
+	secret := "sk_test_should_not_leak"
+	result, _ := runInputMode(t, "tokens", map[string]any{
+		"service_name":  "orders-api",
+		"provider":      "stripe",
+		"token_name":    "STRIPE_API_KEY",
+		"token_present": false,
+		"token_value":   secret,
+		"probe":         map[string]any{"checked": true, "status_code": 401, "body": "invalid bearer " + secret},
+	})
+
+	token, ok := result["token"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected token result, got %+v", result)
+	}
+	if token["status"] != "token_drift_detected" {
+		t.Fatalf("expected token drift, got %+v", token)
+	}
+	if strings.Contains(mustJSON(t, result), secret) {
+		t.Fatalf("token diagnostics leaked secret: %+v", result)
+	}
+}
+
+func TestRunVersionsModeDiagnosesMismatchFromInputFile(t *testing.T) {
+	t.Parallel()
+
+	result, _ := runInputMode(t, "versions", map[string]any{
+		"service_name": "orders-api",
+		"required": []map[string]any{
+			{"kind": "runtime", "name": "node", "constraint": ">=20.0.0"},
+			{"kind": "package", "name": "express", "constraint": "^5.0.0"},
+		},
+		"observed": []map[string]any{
+			{"kind": "runtime", "name": "node", "version": "18.19.0", "source": "process.version"},
+			{"kind": "package", "name": "express", "version": "4.18.3", "source": "package-lock.json"},
+		},
+	})
+
+	versions, ok := result["versions"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected versions result, got %+v", result)
+	}
+	if versions["status"] != "version_mismatch_detected" {
+		t.Fatalf("expected version mismatch, got %+v", versions)
+	}
+}
+
 func newPermissionLaravelApp(t *testing.T) string {
 	t.Helper()
 
@@ -303,4 +497,61 @@ func newPermissionLaravelApp(t *testing.T) string {
 		}
 	}
 	return root
+}
+
+func runInputMode(t *testing.T, mode string, input map[string]any) (map[string]any, string) {
+	t.Helper()
+	inputPath := filepath.Join(t.TempDir(), mode+"-input.json")
+	raw, err := json.MarshalIndent(input, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	if err := os.WriteFile(inputPath, append(raw, '\n'), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := run([]string{"-mode", mode, "-input", inputPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected %s mode exit 0, got %d stderr=%s stdout=%s", mode, code, stderr.String(), stdout.String())
+	}
+	var result map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode %s output: %v\n%s", mode, err, stdout.String())
+	}
+	return result, stderr.String()
+}
+
+func writeRepeatedHTTPFailures(t *testing.T, path string, service string, route string, count int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create log parent: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open log: %v", err)
+	}
+	defer file.Close()
+	for i := 0; i < count; i++ {
+		if _, err := file.WriteString("2026-06-08T09:00:00Z level=error service=" + service + " method=GET route=" + route + " status=503\n"); err != nil {
+			t.Fatalf("write log: %v", err)
+		}
+	}
+}
+
+func writeExecutable(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatalf("write executable: %v", err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal json: %v", err)
+	}
+	return string(raw)
 }

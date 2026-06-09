@@ -16,4 +16,10 @@ Supported package:
 internal/runtime/envvars
 ```
 
-The resolver is designed to be called by future product commands and resolver orchestration. It does not infer secrets, inspect secret managers, or mutate a running process environment.
+Command:
+
+```bash
+go run ./cmd/ai-logfixer-v2 -mode envvars -input ./tmp/envvars-input.json
+```
+
+The resolver does not infer secrets, inspect secret managers, or mutate a running process environment.
