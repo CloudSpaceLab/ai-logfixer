@@ -34,12 +34,21 @@ type Options struct {
 	ReplacementValue string
 	VerifyURL        string
 	ExpectedStatus   int
+	AfterConfigPatch ConfigPatchHook
 
 	WorkflowService        *workflow.Service
 	WorkflowTenantID       string
 	WorkflowActorID        string
 	WorkflowCorrelationID  string
 	WorkflowSuppressOutbox bool
+}
+
+type ConfigPatchHook func(context.Context, ConfigPatch) error
+
+type ConfigPatch struct {
+	ConfigPath       string
+	ConfigKeyPath    string
+	ReplacementValue string
 }
 
 type Result struct {
@@ -81,6 +90,10 @@ func Run(ctx context.Context, options Options) (Result, error) {
 		reason := "Automatic config remediation is blocked because config path, key path, replacement value, or verification URL is missing."
 		return buildBlockedResult(options, signal, investigationRequest, reason, string(logContent))
 	}
+	if family, ok := nonConfigEvidenceFamily(signal, string(logContent)); ok {
+		reason := fmt.Sprintf("Automatic config remediation is blocked because incident evidence points to %s, which does not match the supplied config patch descriptor.", family)
+		return buildBlockedResult(options, signal, investigationRequest, reason, string(logContent))
+	}
 
 	rawConfig, document, beforeValue, err := readJSONConfig(options.ConfigPath, options.ConfigKeyPath)
 	if err != nil {
@@ -120,13 +133,40 @@ func Run(ctx context.Context, options Options) (Result, error) {
 	if err := writeJSONConfig(options.ConfigPath, document); err != nil {
 		return Result{}, fmt.Errorf("apply config patch: %w", recordRemediationPlanFailure(ctx, options, remediationPlan.ID, err, "Config remediation patch failed"))
 	}
+	if options.AfterConfigPatch != nil {
+		patch := ConfigPatch{
+			ConfigPath:       options.ConfigPath,
+			ConfigKeyPath:    options.ConfigKeyPath,
+			ReplacementValue: options.ReplacementValue,
+		}
+		if err := options.AfterConfigPatch(ctx, patch); err != nil {
+			_ = restoreBackup(options.ConfigPath, backupPath)
+			return Result{}, fmt.Errorf("run post-config-patch hook: %w", recordRemediationPlanFailure(ctx, options, remediationPlan.ID, err, "Config remediation post-patch hook failed"))
+		}
+	}
 
 	attempt := buildAttempt(options, signal, remediationPlan.ID)
 	if err := verifyFixed(ctx, options.VerifyURL, options.ExpectedStatus); err != nil {
-		attempt.Status = contractsv1.RemediationStatusFailed
-		attempt.UserMessage = "The patch was applied, but verification failed. Rollback is required."
-		_ = restoreBackup(options.ConfigPath, backupPath)
-		return Result{}, fmt.Errorf("verify fix: %w", recordRemediationPlanFailure(ctx, options, remediationPlan.ID, err, "Config remediation verification failed"))
+		restoreErr := restoreBackup(options.ConfigPath, backupPath)
+		remediationPlan = markVerificationFailedPlan(options, signal, remediationPlan, err, restoreErr)
+		attempt = buildVerificationFailedAttempt(options, signal, remediationPlan.ID, err, restoreErr)
+		receipt := buildVerificationFailedReceipt(options, signal, diagnosis.ID, remediationPlan.ID, attempt.ID, beforeValue, options.ReplacementValue, restoreErr)
+		result := Result{
+			InvestigationRequest: investigationRequest,
+			Diagnosis:            diagnosis,
+			RemediationPlan:      remediationPlan,
+			Attempt:              attempt,
+			Receipt:              receipt,
+			BackupPath:           backupPath,
+		}
+		if validationErr := validateFailureResult(result); validationErr != nil {
+			return Result{}, fmt.Errorf("validate failed remediation result: %w", validationErr)
+		}
+		failureErr := recordRemediationPlanFailure(ctx, options, remediationPlan.ID, err, "Config remediation verification failed")
+		if restoreErr != nil {
+			failureErr = errors.Join(failureErr, fmt.Errorf("restore backup: %w", restoreErr))
+		}
+		return result, fmt.Errorf("verify fix: %w", failureErr)
 	}
 
 	if err := recordRemediationPlanTransition(ctx, options, remediationPlan.ID, contractsv1.RemediationStatusRunning, contractsv1.RemediationStatusSucceeded, "Config remediation verified successfully"); err != nil {
@@ -198,6 +238,64 @@ func hasConfigPatchDescriptor(options Options) bool {
 		strings.TrimSpace(options.ConfigKeyPath) != "" &&
 		strings.TrimSpace(options.ReplacementValue) != "" &&
 		strings.TrimSpace(options.VerifyURL) != ""
+}
+
+func nonConfigEvidenceFamily(signal engine.IncidentSignal, logContent string) (string, bool) {
+	evidenceLines := signal.RawExcerpts
+	if len(evidenceLines) == 0 {
+		evidenceLines = []string{logContent}
+	}
+	evidence := strings.ToLower(strings.Join(evidenceLines, "\n"))
+	for _, family := range nonConfigEvidenceFamilies() {
+		if containsFamilyMarker(evidence, family) {
+			return family, true
+		}
+	}
+	switch {
+	case strings.Contains(evidence, "permission denied"), strings.Contains(evidence, "eacces"):
+		return "permission_drift", true
+	case strings.Contains(evidence, "missing environment variable"), strings.Contains(evidence, "missing env var"):
+		return "missing_env_var", true
+	case strings.Contains(evidence, "database connection"), strings.Contains(evidence, "db connection"):
+		return "broken_database_connection", true
+	case strings.Contains(evidence, "api key"), strings.Contains(evidence, "token invalid"), strings.Contains(evidence, "invalid token"):
+		return "bad_api_key", true
+	case strings.Contains(evidence, "module not found"), strings.Contains(evidence, "package regression"):
+		return "package_regression", true
+	case strings.Contains(evidence, "version mismatch"), strings.Contains(evidence, "unsupported version"):
+		return "version_mismatch", true
+	case strings.Contains(evidence, "restart required"), strings.Contains(evidence, "reload required"):
+		return "restart_reload_needed", true
+	default:
+		return "", false
+	}
+}
+
+func nonConfigEvidenceFamilies() []string {
+	return []string{
+		"permission_drift",
+		"package_regression",
+		"missing_env_var",
+		"bad_file_path",
+		"broken_database_connection",
+		"missing_runtime_resource",
+		"restart_reload_needed",
+		"bad_api_key",
+		"version_mismatch",
+	}
+}
+
+func containsFamilyMarker(evidence string, family string) bool {
+	keys := []string{"family", "failure_family", "bug_category", "category", "root_cause", "cause"}
+	values := []string{family, strings.ReplaceAll(family, "_", "-"), strings.ReplaceAll(family, "_", " ")}
+	for _, key := range keys {
+		for _, value := range values {
+			if strings.Contains(evidence, key+"="+value) || strings.Contains(evidence, key+"=\""+value+"\"") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func recordRemediationPlanTransition(ctx context.Context, options Options, planID string, from contractsv1.RemediationStatus, to contractsv1.RemediationStatus, message string) error {
@@ -524,6 +622,76 @@ func buildAttempt(options Options, signal engine.IncidentSignal, planID string) 
 	}
 }
 
+func markVerificationFailedPlan(options Options, signal engine.IncidentSignal, plan contractsv1.RemediationPlan, verifyErr error, restoreErr error) contractsv1.RemediationPlan {
+	factory := engine.NewContractIDFactory()
+	rollbackStatus := "completed"
+	if restoreErr != nil {
+		rollbackStatus = "failed"
+	}
+	parts := append(signal.StableParts(), plan.ID, rollbackStatus, errorString(verifyErr))
+	timestamp := options.Now.Add(2 * time.Second)
+	plan.Status = contractsv1.RemediationStatusFailed
+	if restoreErr != nil {
+		plan.DisplayStatus = "Verification failed and rollback failed"
+		plan.UserMessage = "The config patch was applied, verification failed, and restoring the backup also failed. Manual intervention is required."
+	} else {
+		plan.DisplayStatus = "Verification failed; rollback completed"
+		plan.UserMessage = "The config patch was applied but verification failed, so AI LogFixer restored the backup."
+	}
+	plan.NextActions = []contractsv1.NextAction{{ID: "next_manual_review_after_failed_config_fix", Label: "Review failed fix", ActionType: "manual_review", Description: "Review the failed verification evidence and restored config before trying another remediator.", Enabled: true}}
+	plan.TimelineEvents = append(plan.TimelineEvents, contractsv1.TimelineEvent{
+		ID:        factory.ID("tl_config_plan_failed", parts...),
+		Type:      "remediation.failed",
+		Message:   "Config remediation verification failed; rollback " + rollbackStatus + ".",
+		Severity:  "error",
+		Timestamp: timestamp,
+	})
+	return plan
+}
+
+func buildVerificationFailedAttempt(options Options, signal engine.IncidentSignal, planID string, verifyErr error, restoreErr error) contractsv1.RemediationAttempt {
+	factory := engine.NewContractIDFactory()
+	rollbackStatus := "rolled_back"
+	if restoreErr != nil {
+		rollbackStatus = "rollback_failed"
+	}
+	parts := append(signal.StableParts(), planID, options.VerifyURL, rollbackStatus, errorString(verifyErr))
+	started := options.Now.Add(time.Second)
+	finished := options.Now.Add(2 * time.Second)
+	message := fmt.Sprintf("%s did not return expected status %d after the config patch; rollback status: %s.", options.VerifyURL, options.ExpectedStatus, rollbackStatus)
+	if verifyErr != nil {
+		message += " Verification error: " + verifyErr.Error()
+	}
+	if restoreErr != nil {
+		message += " Rollback error: " + restoreErr.Error()
+	}
+	return contractsv1.RemediationAttempt{
+		ID:                  factory.ID("rem_attempt_config_patch_failed", parts...),
+		ContractVersion:     contractsv1.ContractVersion,
+		SchemaURL:           contractsv1.RemediationAttemptSchemaURL,
+		RemediationPlanID:   planID,
+		ApprovalRequestID:   "auto_approved_low_risk_config_patch",
+		Status:              contractsv1.RemediationStatusFailed,
+		ExecutionStartedAt:  &started,
+		ExecutionFinishedAt: &finished,
+		MonitorSummary: contractsv1.MonitorSummary{
+			Status:  rollbackStatus,
+			Message: message,
+			Signals: []string{
+				"verification_failed",
+				"verify_url=" + options.VerifyURL,
+				fmt.Sprintf("expected_status=%d", options.ExpectedStatus),
+				"rollback=" + rollbackStatus,
+			},
+			Duration: "1s",
+		},
+		DisplayStatus:  "Verification failed; " + rollbackDisplayStatus(rollbackStatus),
+		UserMessage:    "The config patch did not pass verification, so AI LogFixer recorded the failed attempt and rollback evidence.",
+		TimelineEvents: []contractsv1.TimelineEvent{{ID: factory.ID("tl_config_attempt_failed", parts...), Type: "remediation.failed", Message: "Config patch verification failed.", Severity: "error", Timestamp: finished}},
+		ExternalRefs:   []contractsv1.ExternalRef{},
+	}
+}
+
 func buildReceipt(options Options, signal engine.IncidentSignal, diagnosisID string, planID string, attemptID string, before string, after string) contractsv1.Receipt {
 	factory := engine.NewContractIDFactory()
 	parts := append(signal.StableParts(), diagnosisID, planID, attemptID)
@@ -544,6 +712,65 @@ func buildReceipt(options Options, signal engine.IncidentSignal, diagnosisID str
 		ExternalRefs:         []contractsv1.ExternalRef{},
 		KnowledgeRefs:        []contractsv1.KnowledgeRef{},
 	}
+}
+
+func buildVerificationFailedReceipt(options Options, signal engine.IncidentSignal, diagnosisID string, planID string, attemptID string, before string, after string, restoreErr error) contractsv1.Receipt {
+	factory := engine.NewContractIDFactory()
+	outcome := "failed_rolled_back"
+	action := "updated allowlisted JSON config key; verification failed; restored backup"
+	afterState := fmt.Sprintf("%s=%s (rolled back from %s)", options.ConfigKeyPath, before, after)
+	summary := "AI LogFixer patched an allowlisted config key, verification failed, restored the backup, and recorded this failed remediation receipt."
+	if restoreErr != nil {
+		outcome = "failed_rollback_failed"
+		action = "updated allowlisted JSON config key; verification failed; backup restore failed"
+		afterState = fmt.Sprintf("%s rollback failed after attempted value %s", options.ConfigKeyPath, after)
+		summary = "AI LogFixer patched an allowlisted config key and verification failed, but restoring the backup also failed."
+	}
+	parts := append(signal.StableParts(), diagnosisID, planID, attemptID, outcome)
+	return contractsv1.Receipt{
+		ID:                   factory.ID("receipt_config_patch_failed", parts...),
+		DiagnosisID:          diagnosisID,
+		RemediationPlanID:    planID,
+		RemediationAttemptID: attemptID,
+		ActionTaken:          action,
+		Actor:                "ai-logfixer-config-remediator",
+		Approver:             "auto_approved_low_risk_config_patch",
+		Timestamp:            options.Now.Add(3 * time.Second),
+		BeforeState:          options.ConfigKeyPath + "=" + before,
+		AfterState:           afterState,
+		Outcome:              outcome,
+		Summary:              summary,
+		TimelineEvents:       []contractsv1.TimelineEvent{{ID: factory.ID("tl_config_receipt_failed", parts...), Type: "receipt.created", Message: "Receipt recorded for failed config remediation.", Severity: "error", Timestamp: options.Now.Add(3 * time.Second)}},
+		ExternalRefs:         []contractsv1.ExternalRef{},
+		KnowledgeRefs:        []contractsv1.KnowledgeRef{},
+	}
+}
+
+func validateFailureResult(result Result) error {
+	return errors.Join(
+		result.InvestigationRequest.Validate(),
+		result.Diagnosis.Validate(),
+		result.RemediationPlan.Validate(),
+		result.Attempt.Validate(),
+		result.Receipt.Validate(),
+	)
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func rollbackDisplayStatus(status string) string {
+	if status == "rolled_back" {
+		return "rollback completed"
+	}
+	if status == "rollback_failed" {
+		return "rollback failed"
+	}
+	return "rollback status unknown"
 }
 
 func buildBlockedResult(options Options, signal engine.IncidentSignal, investigationRequest contractsv1.InvestigationRequest, reason string, logContent string) (Result, error) {

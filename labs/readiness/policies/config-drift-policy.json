@@ -1,0 +1,22 @@
+{
+  "lane": "config-drift",
+  "allowed_files": [
+    "config/runtime.json"
+  ],
+  "allowed_keys": [
+    "api_base_url"
+  ],
+  "trusted_sources": [
+    "config/last-known-good.json"
+  ],
+  "forbidden_actions": [
+    "invent_secret",
+    "patch_unlisted_key"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18081/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}

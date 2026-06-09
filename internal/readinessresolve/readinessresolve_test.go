@@ -1,0 +1,384 @@
+package readinessresolve_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/CloudSpaceLab/ai-logfixer/internal/readinessresolve"
+)
+
+func TestLoadCandidateInputValidatesRequiredFields(t *testing.T) {
+	t.Parallel()
+
+	inputPath := filepath.Join(t.TempDir(), "candidate.json")
+	if err := os.WriteFile(inputPath, []byte(`{"scenario_id":"config-drift-api","operational_lane":"config-drift"}`), 0o644); err != nil {
+		t.Fatalf("write candidate input: %v", err)
+	}
+
+	_, err := readinessresolve.LoadCandidateInput(inputPath)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	for _, field := range []string{"service_name", "app_dir", "policy_file", "trace_file", "live_probe_url"} {
+		if !strings.Contains(err.Error(), field+" is required") {
+			t.Fatalf("expected missing %s validation, got %v", field, err)
+		}
+	}
+}
+
+func TestResolveUnsupportedLaneReturnsStructuredResponse(t *testing.T) {
+	t.Parallel()
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "unknown-api",
+		OperationalLane:     "unknown-lane",
+		ServiceName:         "unknown-api",
+		AppDir:              "/tmp/app",
+		PolicyFile:          "/tmp/policy.json",
+		TraceFile:           "/tmp/trace.log",
+		LiveProbeURL:        "http://127.0.0.1:18083/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+	})
+	if err != nil {
+		t.Fatalf("resolve unsupported lane: %v", err)
+	}
+	if response.Status != readinessresolve.StatusUnsupported {
+		t.Fatalf("expected unsupported status, got %+v", response)
+	}
+	if response.Supported {
+		t.Fatalf("unsupported lane should not be marked supported: %+v", response)
+	}
+	if !strings.Contains(response.Message, "not implemented on main") {
+		t.Fatalf("expected implementation status in message, got %q", response.Message)
+	}
+}
+
+func TestResolvePackageRegressionRollsBackTrustedPackage(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	writeJSONFile(t, filepath.Join(appDir, "package.json"), map[string]any{
+		"name": "package-regression-api",
+		"dependencies": map[string]any{
+			"@acme/tax-client": "file:packages/tax-client-2.0.0",
+		},
+	})
+	writeJSONFile(t, filepath.Join(appDir, "evidence", "package-history.json"), map[string]any{
+		"package":         "@acme/tax-client",
+		"current":         "file:packages/tax-client-2.0.0",
+		"last_known_good": "file:packages/tax-client-1.0.0",
+	})
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":             "package-regression",
+		"allowed_files":    []string{"package.json"},
+		"allowed_packages": []string{"@acme/tax-client"},
+		"trusted_sources":  []string{"evidence/package-history.json"},
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("package regression in @acme/tax-client\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/orders/readiness" {
+			http.NotFound(writer, request)
+			return
+		}
+		config := readJSONFile(t, filepath.Join(appDir, "package.json"))
+		dependencies := config["dependencies"].(map[string]any)
+		if dependencies["@acme/tax-client"] != "file:packages/tax-client-1.0.0" {
+			http.Error(writer, "package regression", http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "package-regression-api",
+		OperationalLane:     "package-regression",
+		ServiceName:         "package-regression-api",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve package regression: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved package response, got %+v", response)
+	}
+	config := readJSONFile(t, filepath.Join(appDir, "package.json"))
+	dependencies := config["dependencies"].(map[string]any)
+	if dependencies["@acme/tax-client"] != "file:packages/tax-client-1.0.0" {
+		t.Fatalf("expected package rollback, got %+v", dependencies["@acme/tax-client"])
+	}
+}
+
+func TestResolvePermissionDriftRepairsAllowlistedPath(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	logDir := filepath.Join(appDir, "storage", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	if err := os.Chmod(logDir, 0o555); err != nil {
+		t.Fatalf("chmod log dir: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":           "permission-drift",
+		"allowed_paths":  []string{"storage/logs"},
+		"expected_mode":  "0775",
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte(`127.0.0.1 - - [09/Jun/2026] "GET /orders/readiness HTTP/1.1" 500 -`+"\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := os.WriteFile(filepath.Join(logDir, "audit.log"), []byte("ok\n"), 0o644); err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-api",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-api",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve permission drift: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved permission response, got %+v", response)
+	}
+	info, err := os.Stat(logDir)
+	if err != nil {
+		t.Fatalf("stat log dir: %v", err)
+	}
+	if info.Mode().Perm() != 0o775 {
+		t.Fatalf("expected permission repair to set 0775, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolveRestartReloadRunsAllowlistedDockerRestart(t *testing.T) {
+	appDir := t.TempDir()
+	marker := filepath.Join(appDir, "runtime", "restart-required")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+	if err := os.WriteFile(marker, []byte("restart required\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":                    "restart-reload",
+		"allowed_restart_targets": []string{"restart-reload-api"},
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("starting with stale runtime state; a service restart should clear this\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if _, err := os.Stat(marker); err == nil {
+			http.Error(writer, "restart required", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	fakeBin := t.TempDir()
+	dockerPath := filepath.Join(fakeBin, "docker")
+	script := "#!/bin/sh\nset -eu\nif [ \"$1\" = compose ] && [ \"$6\" = restart ]; then rm -f \"$AI_LOGFIXER_TEST_RESTART_MARKER\"; exit 0; fi\necho unexpected docker args: \"$@\" >&2\nexit 1\n"
+	if err := os.WriteFile(dockerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AI_LOGFIXER_TEST_RESTART_MARKER", marker)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "restart-reload-api",
+		OperationalLane:     "restart-reload",
+		ServiceName:         "restart-reload-api",
+		DockerService:       "restart-reload-api",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		ComposeFile:         filepath.Join(appDir, "docker-compose.yml"),
+		ComposeProject:      "test-project",
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve restart reload: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved restart response, got %+v", response)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("expected fake docker restart to clear marker, stat err=%v", err)
+	}
+}
+
+func TestResolveConfigDriftAppliesTrustedPolicyValue(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	writeJSONFile(t, filepath.Join(appDir, "config", "runtime.json"), map[string]any{
+		"api_base_url": "http://127.0.0.1:1",
+	})
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/health":
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte("ok\n"))
+		case "/orders/readiness":
+			config := readJSONFile(t, filepath.Join(appDir, "config", "runtime.json"))
+			baseURL, _ := config["api_base_url"].(string)
+			response, err := http.Get(strings.TrimRight(baseURL, "/") + "/health")
+			if err != nil {
+				http.Error(writer, "bad config", http.StatusBadGateway)
+				return
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				http.Error(writer, "bad upstream", http.StatusBadGateway)
+				return
+			}
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	writeJSONFile(t, filepath.Join(appDir, "config", "last-known-good.json"), map[string]any{
+		"api_base_url": server.URL,
+		"source":       "trusted-server-inventory",
+	})
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane": "config-drift",
+		"allowed_files": []string{
+			"config/runtime.json",
+		},
+		"allowed_keys": []string{
+			"api_base_url",
+		},
+		"trusted_sources": []string{
+			"config/last-known-good.json",
+		},
+		"verification": map[string]any{
+			"method":          "http",
+			"url":             server.URL + "/orders/readiness",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	trace := `127.0.0.1 - - [01/Jun/2026:12:00:00 +0000] "GET /orders/readiness HTTP/1.1" 502 -` + "\n"
+	if err := os.WriteFile(tracePath, []byte(trace), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "config-drift-api",
+		OperationalLane:     "config-drift",
+		Runtime:             "python",
+		AppCarrier:          "python-http",
+		ServiceName:         "config-drift-api",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+		SafeAction:          "patch allowlisted config key from trusted last-known-good snapshot",
+	})
+	if err != nil {
+		t.Fatalf("resolve config drift: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved supported response, got %+v", response)
+	}
+	if response.RemediationPlan == nil || response.RemediationPlan.Status != "succeeded" {
+		t.Fatalf("expected succeeded remediation plan, got %+v", response.RemediationPlan)
+	}
+
+	config := readJSONFile(t, filepath.Join(appDir, "config", "runtime.json"))
+	if config["api_base_url"] != server.URL {
+		t.Fatalf("expected trusted config value to be applied, got %+v", config["api_base_url"])
+	}
+}
+
+func writeJSONFile(t *testing.T, path string, value map[string]any) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create parent for %s: %v", path, err)
+	}
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal JSON: %v", err)
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func readJSONFile(t *testing.T, path string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	return value
+}

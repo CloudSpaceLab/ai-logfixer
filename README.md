@@ -30,6 +30,15 @@ Run the full test suite:
 go test ./...
 ```
 
+Run the operational drift Docker readiness lab:
+
+```bash
+labs/readiness/bin/run-docker-lab.sh --mode fixture-health
+labs/readiness/bin/run-docker-lab.sh --mode benchmark
+```
+
+Fixture health is expected to pass. Benchmark mode is expected to fail today unless a real candidate fixer is provided through `AI_LOGFIXER_CANDIDATE_COMMAND`. See [Operational Drift Docker Readiness Lab](labs/readiness/README.md).
+
 Run the optional PostgreSQL store integration test by pointing it at an empty test database. The test creates and drops an isolated schema:
 
 ```bash
@@ -45,6 +54,9 @@ The current repo is intentionally contract-first. Runtime work should now conver
 
 - [Durable workflow architecture](docs/architecture/durable-workflow-architecture.md) describes the target system of record, workflow state machine, framework adapter boundary, remediation runtime, and DB shape.
 - [Runtime V2 truth recovery](docs/v2/runtime-truth-recovery.md) describes the active runtime architecture for recovering real errors, detecting suppression sites, redacting evidence, and preparing guarded fix bundles.
+- [Incident evidence intake](docs/v2/incident-evidence-intake.md) describes the small generic intake package for normalizing logs, probes, config snapshots, manifests, permissions, dependencies, services, and process metadata before resolver handoff.
+- [Environment variable diagnostics](docs/v2/env-var-diagnostics.md) describes the safe Runtime V2 env-var drift MVP for missing variable detection, secret blocking, and explicit non-secret default writes.
+- [Framework permission intelligence](docs/v2/framework-permission-intelligence.md) describes the Runtime V2 permissions mode for policy-backed Laravel permission repair with stat evidence, rollback manifests, and verification.
 - [Phase 1 progress and architecture review](docs/reviews/phase-1-progress-and-architecture-review.md) maps the current codebase, open issues, PRs, biggest gaps, and recommended next step.
 - [Live scenario validation](docs/reviews/live-scenario-validation-2026-05-26.md) records real local Runtime V2/Goravel runs and evaluates public log/error corpora for future fixtures.
 - `internal/domain` centralizes allowed investigation, remediation, and approval state transitions.
@@ -53,6 +65,7 @@ The current repo is intentionally contract-first. Runtime work should now conver
 - `internal/workflow` is the first service layer over the store: it owns status transitions and writes audit/outbox records in the same transaction.
 - `internal/engine` contains shared incident-signal grouping, dynamic contract ID generation, and blocked/escalated remediation helpers.
 - `internal/runtime/v2` is the Runtime V2 conservative JSON-config remediation path: the demo app still uses `/orders` and `upstream_url`, but the reusable runner can match other routes/statuses, patch an explicit JSON key path, verify an explicit URL, and escalate safely when no allowlisted patch descriptor exists. It can also call `internal/workflow` when a workflow service is supplied.
+- `internal/runtime/permissions` is the Runtime V2 framework permission resolver. The first supported policy is Laravel writable runtime directories; it detects drift with stat/write-probe evidence, blocks unsafe paths, applies bounded `mkdir`/`chmod` repairs, writes rollback manifests, and verifies recovery.
 - `internal/truth` defines the Runtime V2 truth-recovery layer: stack trace resolution, suppression-site detection, staged reveal planning, redaction, and scoped fix-bundle creation for explicit opencode handoff.
 - `db/migrations/postgres/0001_workflow_store.sql` is the first reference PostgreSQL schema for the durable workflow store.
 - `internal/frameworks/goravel` is the first framework-adapter slice: it parses real Goravel access logs, maps failing routes to controller handlers, collects source evidence, builds contract-valid source patch previews, and can execute only a handler-scoped single-panic source patch through restart/verify callbacks.

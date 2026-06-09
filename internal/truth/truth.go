@@ -96,6 +96,16 @@ type SourceFile struct {
 	Content string `json:"content"`
 }
 
+func PublicResult(result TruthRecoveryResult) TruthRecoveryResult {
+	result.Signal.Message = Redact(result.Signal.Message)
+	result.Signal.StackTrace = Redact(result.Signal.StackTrace)
+	result.StackTrace.Raw = Redact(result.StackTrace.Raw)
+	for index := range result.SuppressionSites {
+		result.SuppressionSites[index].Evidence = Redact(result.SuppressionSites[index].Evidence)
+	}
+	return result
+}
+
 type FrameworkTruthAdapter interface {
 	Name() string
 	DetectSuppression(ErrorSignal, []SourceFile) []SuppressionSite
