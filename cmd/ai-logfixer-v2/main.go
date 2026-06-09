@@ -292,10 +292,11 @@ func runTruthMode(input truthInput) (output, error) {
 	if err != nil {
 		return output{}, err
 	}
-	out := output{TruthRecovery: &result}
-	if !result.RevealPlan.Safe && len(result.RevealPlan.BlockedReasons) > 0 {
-		reason := strings.Join(result.RevealPlan.BlockedReasons, "; ")
-		plan, attempt, receipt, err := truth.BuildBlockedContracts(result.Signal, reason, result.Signal.ObservedAt)
+	publicResult := truth.PublicResult(result)
+	out := output{TruthRecovery: &publicResult}
+	if !publicResult.RevealPlan.Safe && len(publicResult.RevealPlan.BlockedReasons) > 0 {
+		reason := strings.Join(publicResult.RevealPlan.BlockedReasons, "; ")
+		plan, attempt, receipt, err := truth.BuildBlockedContracts(publicResult.Signal, reason, publicResult.Signal.ObservedAt)
 		if err != nil {
 			return output{}, err
 		}

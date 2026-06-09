@@ -169,6 +169,9 @@ func TestRunTruthModeStackTraceOutputsFixBundle(t *testing.T) {
 	if strings.Contains(result.TruthRecovery.FixBundle.Prompt, "abcd1234") {
 		t.Fatalf("fix bundle leaked token: %s", result.TruthRecovery.FixBundle.Prompt)
 	}
+	if strings.Contains(stdout.String(), "abcd1234") {
+		t.Fatalf("truth recovery public output leaked token:\n%s", stdout.String())
+	}
 	if !strings.Contains(stderr.String(), "Runtime V2 truth completed") {
 		t.Fatalf("expected truth completion message, got %q", stderr.String())
 	}
