@@ -157,6 +157,19 @@ go run ./cmd/ai-logfixer-v2 \
 
 Production reveal attempts are blocked by design; Runtime V2 emits an escalated remediation plan instead of disabling suppression automatically.
 
+Run issue #27 runtime drift resolvers through JSON input files:
+
+```bash
+go run ./cmd/ai-logfixer-v2 -mode envvars -input ./tmp/envvars-input.json
+go run ./cmd/ai-logfixer-v2 -mode database -input ./tmp/database-input.json
+go run ./cmd/ai-logfixer-v2 -mode resources -input ./tmp/resources-input.json
+go run ./cmd/ai-logfixer-v2 -mode restart -input ./tmp/restart-input.json
+go run ./cmd/ai-logfixer-v2 -mode tokens -input ./tmp/tokens-input.json
+go run ./cmd/ai-logfixer-v2 -mode versions -input ./tmp/versions-input.json
+```
+
+These modes expose the existing safe resolver packages as black-box product commands. Mutating modes still require explicit allowlists or policy fields in the input, and secret-bearing diagnostics continue to block or redact rather than invent values.
+
 Verify the app recovered:
 
 ```bash

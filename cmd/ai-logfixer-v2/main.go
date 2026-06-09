@@ -9,10 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	contractsv1 "github.com/CloudSpaceLab/ai-logfixer/internal/contracts/v1"
+	"github.com/CloudSpaceLab/ai-logfixer/internal/runtime/databases"
+	envvars "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/envvars"
 	permissions "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/permissions"
+	"github.com/CloudSpaceLab/ai-logfixer/internal/runtime/resources"
+	"github.com/CloudSpaceLab/ai-logfixer/internal/runtime/restart"
+	"github.com/CloudSpaceLab/ai-logfixer/internal/runtime/tokens"
 	runtimev2 "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/v2"
+	"github.com/CloudSpaceLab/ai-logfixer/internal/runtime/versions"
 	"github.com/CloudSpaceLab/ai-logfixer/internal/truth"
 )
 
@@ -29,6 +36,20 @@ type output struct {
 	PermissionFindings   []permissions.PermissionFinding   `json:"permission_findings,omitempty"`
 	PermissionOperations []permissions.PermissionOperation `json:"permission_operations,omitempty"`
 	RollbackPath         string                            `json:"rollback_path,omitempty"`
+	EnvVars              *envvars.Result                   `json:"envvars,omitempty"`
+	Database             *databases.Result                 `json:"database,omitempty"`
+	Resource             *resources.Result                 `json:"resource,omitempty"`
+	Restart              *restartModeOutput                `json:"restart,omitempty"`
+	Token                *tokens.Result                    `json:"token,omitempty"`
+	Versions             *versions.Result                  `json:"versions,omitempty"`
+}
+
+type restartModeOutput struct {
+	InvestigationRequest contractsv1.InvestigationRequest `json:"investigation_request"`
+	Diagnosis            contractsv1.DiagnosisResult      `json:"diagnosis"`
+	RemediationPlan      contractsv1.RemediationPlan      `json:"remediation_plan"`
+	Attempt              contractsv1.RemediationAttempt   `json:"attempt"`
+	Receipt              contractsv1.Receipt              `json:"receipt"`
 }
 
 type stringList []string
@@ -50,7 +71,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	flags := flag.NewFlagSet("ai-logfixer-v2", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
-	mode := flags.String("mode", "config", "Runtime V2 mode: config, permissions, or truth")
+	mode := flags.String("mode", "config", "Runtime V2 mode: config, permissions, truth, envvars, database, resources, restart, tokens, or versions")
+	inputPath := flags.String("input", "", "path to JSON input for Runtime V2 diagnostic/remediation modes")
 
 	serviceName := flags.String("service", "goravel-demo", "service name to investigate")
 	baseURL := flags.String("base-url", "http://127.0.0.1:8090", "demo app base URL")
@@ -120,6 +142,18 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			stackTraceFile: *stackTraceFile,
 			sourceFiles:    sourceFiles,
 		})
+	case "envvars":
+		result, err = runEnvvarsMode(*inputPath)
+	case "database":
+		result, err = runDatabaseMode(*inputPath)
+	case "resources":
+		result, err = runResourcesMode(*inputPath)
+	case "restart":
+		result, err = runRestartMode(*inputPath)
+	case "tokens":
+		result, err = runTokensMode(*inputPath)
+	case "versions":
+		result, err = runVersionsMode(*inputPath)
 	default:
 		fmt.Fprintf(stderr, "unsupported Runtime V2 mode %q\n", *mode)
 		return 2
@@ -157,7 +191,13 @@ func hasStructuredOutput(result output) bool {
 		result.Attempt != nil ||
 		result.Receipt != nil ||
 		result.BackupPath != "" ||
-		result.TruthRecovery != nil
+		result.TruthRecovery != nil ||
+		result.EnvVars != nil ||
+		result.Database != nil ||
+		result.Resource != nil ||
+		result.Restart != nil ||
+		result.Token != nil ||
+		result.Versions != nil
 }
 
 type runtimeConfigInput struct {
@@ -331,4 +371,302 @@ func readSourceFiles(paths []string) ([]truth.SourceFile, error) {
 		})
 	}
 	return files, nil
+}
+
+type envvarsInput struct {
+	ServiceName string            `json:"service_name"`
+	EnvFilePath string            `json:"env_file_path"`
+	Policy      envvars.Policy    `json:"policy"`
+	Environment map[string]string `json:"environment"`
+	Apply       bool              `json:"apply"`
+}
+
+func runEnvvarsMode(inputPath string) (output, error) {
+	var input envvarsInput
+	if err := decodeInputFile(inputPath, &input); err != nil {
+		return output{}, err
+	}
+	lookup := os.LookupEnv
+	if input.Environment != nil {
+		lookup = func(name string) (string, bool) {
+			value, ok := input.Environment[name]
+			return value, ok
+		}
+	}
+	result, err := envvars.Run(context.Background(), envvars.Options{
+		ServiceName: input.ServiceName,
+		EnvFilePath: input.EnvFilePath,
+		Policy:      input.Policy,
+		LookupEnv:   lookup,
+		Apply:       input.Apply,
+	})
+	if err != nil {
+		return output{}, err
+	}
+	return output{EnvVars: &result}, nil
+}
+
+type databaseInput struct {
+	ServiceName       string                       `json:"service_name"`
+	DatabaseURL       string                       `json:"database_url"`
+	AllowedSchemes    []string                     `json:"allowed_schemes"`
+	AllowedHosts      []string                     `json:"allowed_hosts"`
+	RequiredDatabase  string                       `json:"required_database"`
+	RequiredTables    []databases.TableExpectation `json:"required_tables"`
+	ObservedTables    []databases.TableState       `json:"observed_tables"`
+	ConnectionProbe   databases.ProbeResult        `json:"connection_probe"`
+	AllowAutoMutation bool                         `json:"allow_auto_mutation"`
+}
+
+func runDatabaseMode(inputPath string) (output, error) {
+	var input databaseInput
+	if err := decodeInputFile(inputPath, &input); err != nil {
+		return output{}, err
+	}
+	result, err := databases.Diagnose(databases.Options{
+		ServiceName:       input.ServiceName,
+		DatabaseURL:       input.DatabaseURL,
+		AllowedSchemes:    input.AllowedSchemes,
+		AllowedHosts:      input.AllowedHosts,
+		RequiredDatabase:  input.RequiredDatabase,
+		RequiredTables:    input.RequiredTables,
+		ObservedTables:    input.ObservedTables,
+		ConnectionProbe:   input.ConnectionProbe,
+		AllowAutoMutation: input.AllowAutoMutation,
+	})
+	if err != nil {
+		return output{}, err
+	}
+	return output{Database: &result}, nil
+}
+
+type resourcesInput struct {
+	AppRoot          string                    `json:"app_root"`
+	ResourcePath     string                    `json:"resource_path"`
+	Allowlist        []string                  `json:"allowlist"`
+	Kind             resources.Kind            `json:"kind"`
+	Mode             os.FileMode               `json:"mode"`
+	ContentStrategy  resources.ContentStrategy `json:"content_strategy"`
+	Content          string                    `json:"content"`
+	VerifyURL        string                    `json:"verify_url"`
+	ExpectedStatus   int                       `json:"expected_status"`
+	VerifyCommand    string                    `json:"verify_command"`
+	ManifestBaseName string                    `json:"manifest_base_name"`
+}
+
+func runResourcesMode(inputPath string) (output, error) {
+	var input resourcesInput
+	if err := decodeInputFile(inputPath, &input); err != nil {
+		return output{}, err
+	}
+	result, err := resources.Ensure(context.Background(), resources.Options{
+		AppRoot:          input.AppRoot,
+		ResourcePath:     input.ResourcePath,
+		Allowlist:        input.Allowlist,
+		Kind:             input.Kind,
+		Mode:             input.Mode,
+		ContentStrategy:  input.ContentStrategy,
+		Content:          input.Content,
+		VerifyURL:        input.VerifyURL,
+		ExpectedStatus:   input.ExpectedStatus,
+		VerifyCommand:    input.VerifyCommand,
+		ManifestBaseName: input.ManifestBaseName,
+	})
+	if err != nil {
+		return output{Resource: &result}, err
+	}
+	return output{Resource: &result}, nil
+}
+
+type restartInput struct {
+	ServiceName    string             `json:"service_name"`
+	LogPath        string             `json:"log_path"`
+	Method         string             `json:"method"`
+	Route          string             `json:"route"`
+	StatusCode     int                `json:"status_code"`
+	StatusClass    int                `json:"status_class"`
+	ErrorThreshold int                `json:"error_threshold"`
+	Window         time.Duration      `json:"window"`
+	ActionName     string             `json:"action_name"`
+	Policy         restartPolicyInput `json:"policy"`
+	Verification   restartVerifyInput `json:"verification"`
+}
+
+type restartPolicyInput struct {
+	AllowedActions []restartActionInput `json:"allowed_actions"`
+}
+
+type restartActionInput struct {
+	Name        string              `json:"name"`
+	ServiceName string              `json:"service_name"`
+	Command     restartCommandInput `json:"command"`
+}
+
+type restartCommandInput struct {
+	Path string   `json:"path"`
+	Args []string `json:"args"`
+	Dir  string   `json:"dir"`
+	Env  []string `json:"env"`
+}
+
+type restartVerifyInput struct {
+	HTTP    *restartHTTPVerifyInput    `json:"http"`
+	Command *restartCommandVerifyInput `json:"command"`
+}
+
+type restartHTTPVerifyInput struct {
+	URL            string `json:"url"`
+	ExpectedStatus int    `json:"expected_status"`
+	BodyContains   string `json:"body_contains"`
+}
+
+type restartCommandVerifyInput struct {
+	Command        restartCommandInput `json:"command"`
+	OutputContains string              `json:"output_contains"`
+}
+
+func runRestartMode(inputPath string) (output, error) {
+	var input restartInput
+	if err := decodeInputFile(inputPath, &input); err != nil {
+		return output{}, err
+	}
+	result, err := restart.Run(context.Background(), restart.Options{
+		ServiceName:    input.ServiceName,
+		LogPath:        input.LogPath,
+		Method:         input.Method,
+		Route:          input.Route,
+		StatusCode:     input.StatusCode,
+		StatusClass:    input.StatusClass,
+		ErrorThreshold: input.ErrorThreshold,
+		Window:         input.Window,
+		ActionName:     input.ActionName,
+		Policy:         input.Policy.toPolicy(),
+		Verification:   input.Verification.toVerification(),
+	})
+	restartOut := restartModeOutput{
+		InvestigationRequest: result.InvestigationRequest,
+		Diagnosis:            result.Diagnosis,
+		RemediationPlan:      result.RemediationPlan,
+		Attempt:              result.Attempt,
+		Receipt:              result.Receipt,
+	}
+	if err != nil {
+		return output{Restart: &restartOut}, err
+	}
+	return output{Restart: &restartOut}, nil
+}
+
+func (input restartPolicyInput) toPolicy() restart.Policy {
+	actions := make([]restart.Action, 0, len(input.AllowedActions))
+	for _, action := range input.AllowedActions {
+		actions = append(actions, restart.Action{
+			Name:        action.Name,
+			ServiceName: action.ServiceName,
+			Command:     action.Command.toCommand(),
+		})
+	}
+	return restart.Policy{AllowedActions: actions}
+}
+
+func (input restartVerifyInput) toVerification() restart.Verification {
+	var verification restart.Verification
+	if input.HTTP != nil {
+		verification.HTTP = &restart.HTTPVerification{
+			URL:            input.HTTP.URL,
+			ExpectedStatus: input.HTTP.ExpectedStatus,
+			BodyContains:   input.HTTP.BodyContains,
+		}
+	}
+	if input.Command != nil {
+		verification.Command = &restart.CommandVerification{
+			Command:        input.Command.Command.toCommand(),
+			OutputContains: input.Command.OutputContains,
+		}
+	}
+	return verification
+}
+
+func (input restartCommandInput) toCommand() restart.Command {
+	return restart.Command{
+		Path: input.Path,
+		Args: append([]string(nil), input.Args...),
+		Dir:  input.Dir,
+		Env:  append([]string(nil), input.Env...),
+	}
+}
+
+type tokensInput struct {
+	ServiceName       string       `json:"service_name"`
+	Provider          string       `json:"provider"`
+	TokenName         string       `json:"token_name"`
+	TokenPresent      bool         `json:"token_present"`
+	TokenValue        string       `json:"token_value"`
+	Probe             tokens.Probe `json:"probe"`
+	RequiredScopes    []string     `json:"required_scopes"`
+	ObservedScopes    []string     `json:"observed_scopes"`
+	ExpiresAt         time.Time    `json:"expires_at"`
+	AllowAutoMutation bool         `json:"allow_auto_mutation"`
+}
+
+func runTokensMode(inputPath string) (output, error) {
+	var input tokensInput
+	if err := decodeInputFile(inputPath, &input); err != nil {
+		return output{}, err
+	}
+	result, err := tokens.Diagnose(tokens.Options{
+		ServiceName:       input.ServiceName,
+		Provider:          input.Provider,
+		TokenName:         input.TokenName,
+		TokenPresent:      input.TokenPresent,
+		TokenValue:        input.TokenValue,
+		Probe:             input.Probe,
+		RequiredScopes:    input.RequiredScopes,
+		ObservedScopes:    input.ObservedScopes,
+		ExpiresAt:         input.ExpiresAt,
+		AllowAutoMutation: input.AllowAutoMutation,
+	})
+	if err != nil {
+		return output{}, err
+	}
+	return output{Token: &result}, nil
+}
+
+type versionsInput struct {
+	ServiceName string                     `json:"service_name"`
+	Required    []versions.Requirement     `json:"required"`
+	Observed    []versions.ObservedVersion `json:"observed"`
+	AllowRepair bool                       `json:"allow_repair"`
+}
+
+func runVersionsMode(inputPath string) (output, error) {
+	var input versionsInput
+	if err := decodeInputFile(inputPath, &input); err != nil {
+		return output{}, err
+	}
+	result, err := versions.Diagnose(versions.Options{
+		ServiceName: input.ServiceName,
+		Required:    input.Required,
+		Observed:    input.Observed,
+		AllowRepair: input.AllowRepair,
+	})
+	if err != nil {
+		return output{}, err
+	}
+	return output{Versions: &result}, nil
+}
+
+func decodeInputFile(path string, target any) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("-input is required for this Runtime V2 mode")
+	}
+	raw, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("read input file: %w", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode input file: %w", err)
+	}
+	return nil
 }
