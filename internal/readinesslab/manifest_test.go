@@ -2,7 +2,9 @@ package readinesslab
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,6 +23,7 @@ type scenario struct {
 	OperationalLane      string `json:"operational_lane"`
 	Runtime              string `json:"runtime"`
 	AppCarrier           string `json:"app_carrier"`
+	DockerService        string `json:"docker_service"`
 	AppDir               string `json:"app_dir"`
 	PolicyFile           string `json:"policy_file"`
 	LiveProbeURL         string `json:"live_probe_url"`
@@ -100,6 +103,54 @@ func TestOperationalReadinessManifestCoversRequiredLanes(t *testing.T) {
 	}
 }
 
+func TestPermissionDriftManifestCoversIssue45Platforms(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var doc manifest
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	required := map[string]bool{
+		"go/net-http":           false,
+		"node/express":          false,
+		"python/flask":          false,
+		"php/laravel-style":     false,
+		"ruby/lightweight-http": false,
+		"java/lightweight-http": false,
+	}
+	ports := map[string]string{}
+	for _, item := range doc.Scenarios {
+		if item.OperationalLane != "permission-drift" {
+			continue
+		}
+		key := item.Runtime + "/" + item.AppCarrier
+		if _, ok := required[key]; ok {
+			required[key] = true
+		}
+		if item.DockerService == "" {
+			t.Fatalf("%s docker_service is required for black-box remediation", item.ID)
+		}
+		parsed, err := url.Parse(item.LiveProbeURL)
+		if err != nil {
+			t.Fatalf("%s live_probe_url is invalid: %v", item.ID, err)
+		}
+		if previous, exists := ports[parsed.Port()]; exists {
+			t.Fatalf("%s reuses live probe port %s from %s", item.ID, parsed.Port(), previous)
+		}
+		ports[parsed.Port()] = item.ID
+	}
+	for platform, present := range required {
+		if !present {
+			t.Fatalf("permission-drift platform %q missing from readiness manifest", platform)
+		}
+	}
+}
+
 func TestDockerLabScriptSeparatesFixtureHealthFromBenchmark(t *testing.T) {
 	root := repoRoot(t)
 	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
@@ -127,6 +178,83 @@ func TestDockerLabScriptSeparatesFixtureHealthFromBenchmark(t *testing.T) {
 		if strings.Contains(script, snippet) {
 			t.Fatalf("script must not include answer-key fixer %q", snippet)
 		}
+	}
+}
+
+func TestDockerLabScriptSupportsPermissionLaneFiltering(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"--lane",
+		"AI_LOGFIXER_LANE_FILTER",
+		"selected_services",
+		"permission-drift",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("script missing lane-filtering snippet %q", snippet)
+		}
+	}
+}
+
+func TestDockerLabScriptSupportsPermissionDriftVariants(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"AI_LOGFIXER_PERMISSION_DRIFT_VARIANT",
+		"apply_permission_drift_variant",
+		"missing",
+		"rm -rf",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("script missing permission drift variant snippet %q", snippet)
+		}
+	}
+}
+
+func TestPermissionEnduranceRunnerExposesLongRunningBlackBoxLoop(t *testing.T) {
+	root := repoRoot(t)
+	runnerPath := filepath.Join(root, "labs", "readiness", "bin", "run-permission-endurance.py")
+	output, err := exec.Command("python3", runnerPath, "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("permission endurance runner help failed: %v\n%s", err, string(output))
+	}
+	help := string(output)
+
+	requiredSnippets := []string{
+		"--cycles",
+		"--duration-seconds",
+		"--candidate-command",
+		"--seed",
+		"--variants",
+		"permission-drift",
+		"endurance-report.json",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(help, snippet) {
+			t.Fatalf("permission endurance runner help missing %q:\n%s", snippet, help)
+		}
+	}
+
+	output, err = exec.Command("python3", runnerPath, "--candidate-command", "true").CombinedOutput()
+	if err == nil {
+		t.Fatalf("permission endurance runner should reject runs without --cycles or --duration-seconds:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), "requires --cycles or --duration-seconds") {
+		t.Fatalf("permission endurance runner missing bounded-run error:\n%s", string(output))
 	}
 }
 

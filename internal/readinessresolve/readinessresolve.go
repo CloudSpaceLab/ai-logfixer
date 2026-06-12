@@ -300,9 +300,9 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 	if err != nil {
 		return Response{}, err
 	}
-	mode, err := strconv.ParseUint(strings.TrimPrefix(policy.ExpectedMode, "0"), 8, 32)
+	mode, err := parsePermissionMode(policy.ExpectedMode)
 	if err != nil {
-		return Response{}, fmt.Errorf("parse expected_mode: %w", err)
+		return Response{}, err
 	}
 	for _, relativePath := range policy.AllowedPaths {
 		if _, err := joinInsideApp(input.AppDir, relativePath); err != nil {
@@ -315,7 +315,10 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 			continue
 		}
 		path, _ := joinInsideApp(input.AppDir, relativePath)
-		if err := os.Chmod(path, os.FileMode(mode)); err != nil {
+		if err := os.MkdirAll(path, mode); err != nil {
+			return Response{}, fmt.Errorf("mkdir %s: %w", relativePath, err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
 			return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
 		}
 	}
@@ -429,7 +432,26 @@ func loadPermissionPolicy(path string) (permissionPolicy, error) {
 	if strings.TrimSpace(policy.ExpectedMode) == "" {
 		return permissionPolicy{}, errors.New("permission-drift policy expected_mode is required")
 	}
+	mode, err := parsePermissionMode(policy.ExpectedMode)
+	if err != nil {
+		return permissionPolicy{}, err
+	}
+	if mode&0o002 != 0 {
+		return permissionPolicy{}, fmt.Errorf("permission-drift policy expected_mode %q is unsafe; world-writable modes such as 0777 are forbidden", policy.ExpectedMode)
+	}
 	return policy, nil
+}
+
+func parsePermissionMode(value string) (os.FileMode, error) {
+	trimmed := strings.TrimSpace(value)
+	parsed, err := strconv.ParseUint(trimmed, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse expected_mode %q: %w", value, err)
+	}
+	if parsed > 0o777 {
+		return 0, fmt.Errorf("permission-drift policy expected_mode %q exceeds file permission bits", value)
+	}
+	return os.FileMode(parsed), nil
 }
 
 func loadRestartPolicy(path string) (restartPolicy, error) {
@@ -570,7 +592,7 @@ func dockerRepairPermissions(ctx context.Context, input CandidateInput, relative
 	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(relativePath))
 	owner := firstNonEmpty(policy.ExpectedOwner, "app")
 	group := firstNonEmpty(policy.ExpectedGroup, owner)
-	script := fmt.Sprintf("chown -R %s:%s %s && chmod %s %s", shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(policy.ExpectedMode), shellQuote(containerPath))
+	script := fmt.Sprintf("mkdir -p %s && chown -R %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(policy.ExpectedMode), shellQuote(containerPath))
 	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "exec", "-T", "-u", "root", input.DockerService, "sh", "-lc", script}
 	command := exec.CommandContext(ctx, "docker", args...)
 	output, err := command.CombinedOutput()

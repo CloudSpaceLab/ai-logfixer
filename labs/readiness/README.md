@@ -15,6 +15,7 @@ Run fixture health:
 
 ```bash
 labs/readiness/bin/run-docker-lab.sh --mode fixture-health
+labs/readiness/bin/run-docker-lab.sh --mode fixture-health --lane permission-drift
 ```
 
 Fixture health is expected to pass. It proves the Docker apps build, the operational failures are present, and evidence artifacts are captured.
@@ -23,6 +24,7 @@ Run the product benchmark:
 
 ```bash
 labs/readiness/bin/run-docker-lab.sh --mode benchmark
+labs/readiness/bin/run-docker-lab.sh --mode benchmark --lane permission-drift
 ```
 
 Benchmark mode is expected to fail today without `AI_LOGFIXER_CANDIDATE_COMMAND`. That is intentional. It only passes when a real candidate fixes every scenario and verification succeeds.
@@ -33,7 +35,12 @@ Benchmark mode is expected to fail today without `AI_LOGFIXER_CANDIDATE_COMMAND`
 | --- | --- | --- | --- | --- |
 | `config-drift-api` | config drift | Python HTTP | invalid upstream config URL | patch allowlisted config key from last-known-good evidence |
 | `package-regression-api` | package regression | Express | bad local package version throws at runtime | rollback package to last-known-good pinned version |
-| `permission-drift-api` | permission drift | Python HTTP | log directory is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-go-http` | permission drift | Go `net/http` | `data` is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-node-express` | permission drift | Node/Express | `uploads` is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-python-flask` | permission drift | Python Flask | `instance` is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-php-laravel-style` | permission drift | PHP Laravel-style | `storage/logs` is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-ruby-lightweight` | permission drift | Ruby lightweight HTTP | `storage` is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-java-lightweight` | permission drift | Java lightweight HTTP | `logs` is not writable by app user | repair allowlisted owner/mode |
 | `restart-reload-api` | restart/reload | Go net/http | process is serving stale runtime state | restart the allowlisted service only |
 
 ## Candidate Interface
@@ -47,6 +54,17 @@ go build -o tmp/ai-logfixer-readiness-resolve ./cmd/ai-logfixer-readiness-resolv
 AI_LOGFIXER_CANDIDATE_COMMAND='./tmp/ai-logfixer-readiness-resolve --input "$AI_LOGFIXER_CANDIDATE_INPUT"' \
   labs/readiness/bin/run-docker-lab.sh --mode benchmark
 ```
+
+Run the permission-drift endurance loop:
+
+```bash
+labs/readiness/bin/run-permission-endurance.py \
+  --cycles 10 \
+  --seed permission-regression-001 \
+  --candidate-command './tmp/ai-logfixer-readiness-resolve --input "$AI_LOGFIXER_CANDIDATE_INPUT"'
+```
+
+Use `--duration-seconds 21600` for a six-hour run. Add `--cycles` only when you also want a hard cycle cap. The endurance runner calls the normal Docker lab with `--lane permission-drift`, writes each cycle under `tmp/permission-endurance/<timestamp>/cycle-XXXX`, and writes a top-level `endurance-report.json`.
 
 Each candidate process receives:
 
@@ -92,8 +110,13 @@ Set `AI_LOGFIXER_KEEP_READINESS_LAB=1` to keep the copied workspace and Compose 
 | --- | --- |
 | Config drift API | `18081` |
 | Package regression API | `18082` |
-| Permission drift API | `18083` |
+| Permission drift Go HTTP | `18083` |
 | Restart/reload API | `18084` |
+| Permission drift Node/Express | `18085` |
+| Permission drift Python Flask | `18086` |
+| Permission drift PHP Laravel-style | `18087` |
+| Permission drift Ruby lightweight | `18088` |
+| Permission drift Java lightweight | `18089` |
 
 ## Manual Probe
 

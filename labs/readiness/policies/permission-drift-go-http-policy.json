@@ -1,0 +1,19 @@
+{
+  "lane": "permission-drift",
+  "allowed_paths": [
+    "data"
+  ],
+  "expected_owner": "app",
+  "expected_group": "app",
+  "expected_mode": "0775",
+  "forbidden_actions": [
+    "chmod_777",
+    "recursive_root_change_outside_allowlist"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18083/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}

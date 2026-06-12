@@ -4,20 +4,28 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  labs/readiness/bin/run-docker-lab.sh --mode fixture-health
-  labs/readiness/bin/run-docker-lab.sh --mode benchmark
+  labs/readiness/bin/run-docker-lab.sh --mode fixture-health [--lane permission-drift]
+  labs/readiness/bin/run-docker-lab.sh --mode benchmark [--lane permission-drift]
 
 Modes:
   fixture-health  Build the lab, confirm all fixtures are broken, capture evidence, and exit 0.
   benchmark       Run AI_LOGFIXER_CANDIDATE_COMMAND if set, then verify recovery. Expected current state: benchmark-fails-without-candidate.
+
+Options:
+  --lane LANE     Filter the copied manifest to one operational lane. Can also be set with AI_LOGFIXER_LANE_FILTER.
 USAGE
 }
 
 mode="benchmark"
+lane_filter="${AI_LOGFIXER_LANE_FILTER:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --mode)
       mode="${2:-}"
+      shift 2
+      ;;
+    --lane)
+      lane_filter="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -47,6 +55,7 @@ candidate_command="${AI_LOGFIXER_CANDIDATE_COMMAND:-}"
 keep_lab="${AI_LOGFIXER_KEEP_READINESS_LAB:-0}"
 broken_timeout="${AI_LOGFIXER_BROKEN_PROBE_TIMEOUT_SECONDS:-180}"
 fixed_timeout="${AI_LOGFIXER_FIXED_PROBE_TIMEOUT_SECONDS:-15}"
+permission_drift_variant="${AI_LOGFIXER_PERMISSION_DRIFT_VARIANT:-mode-strict}"
 
 mkdir -p \
   "$artifacts/logs" \
@@ -59,6 +68,47 @@ mkdir -p \
 cp -R "$repo_root/labs/readiness/." "$lab_root/"
 
 compose=(docker compose -f "$lab_root/docker-compose.yml" -p "$project")
+
+if [[ -n "$lane_filter" ]]; then
+  python3 - "$lab_root/lab.json" "$lane_filter" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+manifest_path = Path(sys.argv[1])
+lane_filter = sys.argv[2].strip()
+manifest = json.loads(manifest_path.read_text())
+scenarios = [
+    scenario
+    for scenario in manifest["scenarios"]
+    if scenario["operational_lane"] == lane_filter
+]
+if not scenarios:
+    print(f"no scenarios matched lane filter {lane_filter!r}", file=sys.stderr)
+    raise SystemExit(2)
+manifest["lane_filter"] = lane_filter
+manifest["required_lanes"] = [lane_filter]
+manifest["name"] = manifest["name"] + f" ({lane_filter} only)"
+manifest["scenarios"] = scenarios
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+PY
+fi
+
+selected_services=()
+if [[ -n "$lane_filter" ]]; then
+  while IFS= read -r service; do
+    selected_services+=("$service")
+  done < <(python3 - "$lab_root/lab.json" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+for scenario in manifest["scenarios"]:
+    print(scenario["docker_service"])
+PY
+  )
+fi
 
 cleanup() {
   if [[ "$keep_lab" != "1" ]]; then
@@ -75,8 +125,54 @@ echo "readiness lab mode: $mode"
 echo "readiness lab root: $lab_root"
 echo "readiness artifacts: $artifacts"
 echo "compose project: $project"
+if [[ -n "$lane_filter" ]]; then
+  echo "lane filter: $lane_filter"
+fi
+echo "permission drift variant: $permission_drift_variant"
 
-"${compose[@]}" up -d --build
+if [[ "${#selected_services[@]}" -gt 0 ]]; then
+  "${compose[@]}" up -d --build "${selected_services[@]}"
+else
+  "${compose[@]}" up -d --build
+fi
+
+apply_permission_drift_variant() {
+  case "$permission_drift_variant" in
+    ""|mode-strict)
+      return 0
+      ;;
+    missing)
+      while IFS=$'\t' read -r service command; do
+        "${compose[@]}" exec -T -u root "$service" sh -lc "$command" < /dev/null
+      done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
+from pathlib import Path
+import json
+import shlex
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+lab_root = Path(sys.argv[2]).resolve()
+for scenario in manifest["scenarios"]:
+    if scenario["operational_lane"] != "permission-drift":
+        continue
+    policy = json.loads((lab_root / scenario["policy_file"]).read_text())
+    commands = []
+    for relative_path in policy.get("allowed_paths", []):
+        container_path = "/app/" + relative_path.strip("/")
+        commands.append("rm -rf " + shlex.quote(container_path))
+    if commands:
+        print("\t".join([scenario["docker_service"], " && ".join(commands)]))
+PY
+      )
+      ;;
+    *)
+      echo "invalid AI_LOGFIXER_PERMISSION_DRIFT_VARIANT: $permission_drift_variant" >&2
+      return 2
+      ;;
+  esac
+}
+
+apply_permission_drift_variant
 
 probe_manifest() {
   local probe_mode="$1"
@@ -184,10 +280,34 @@ PY
     "${compose[@]}" logs --no-color "$service" > "$artifacts/logs/$scenario_id.log"
   done
 
-  for service in permission-drift-api restart-reload-api; do
-    "${compose[@]}" exec -T "$service" sh -lc 'id; find /app -maxdepth 3 -type d -name logs -exec ls -ld {} \; 2>/dev/null || true; ps 2>/dev/null || true' \
-      > "$artifacts/inventory/$service.txt" 2>&1 || true
-  done
+  while IFS=$'\t' read -r scenario_id service command; do
+    "${compose[@]}" exec -T "$service" sh -lc "$command" < /dev/null \
+      > "$artifacts/inventory/$scenario_id.txt" 2>&1 || true
+  done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
+from pathlib import Path
+import json
+import shlex
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+lab_root = Path(sys.argv[2]).resolve()
+for scenario in manifest["scenarios"]:
+    lane = scenario["operational_lane"]
+    commands = ["id"]
+    if lane == "permission-drift":
+        policy = json.loads((lab_root / scenario["policy_file"]).read_text())
+        for relative_path in policy.get("allowed_paths", []):
+            container_path = "/app/" + relative_path.strip("/")
+            commands.append("printf '%s\\n' " + shlex.quote("--- " + container_path))
+            commands.append("ls -ld " + shlex.quote(container_path) + " 2>/dev/null || true")
+    elif lane == "restart-reload":
+        commands.append("find /app -maxdepth 3 -type f -o -type d 2>/dev/null | sort | head -50")
+    else:
+        continue
+    commands.append("ps 2>/dev/null || true")
+    print("\t".join([scenario["id"], scenario["docker_service"], "; ".join(commands)]))
+PY
+  )
 
   python3 - "$lab_root/lab.json" "$lab_root" "$artifacts/logs" "$artifacts/live-traces" "$artifacts/candidate-inputs" "$artifacts/inventory" "$project" "$lab_root/docker-compose.yml" <<'PY'
 from pathlib import Path
@@ -246,7 +366,7 @@ PY
 write_report() {
   local report_mode="$1"
   local output="$2"
-  python3 - "$lab_root/lab.json" "$artifacts/probes/broken.json" "$artifacts/probes/fixed.json" "$artifacts/candidate-results.ndjson" "$output" "$report_mode" <<'PY'
+  python3 - "$lab_root/lab.json" "$artifacts/probes/broken.json" "$artifacts/probes/fixed.json" "$artifacts/candidate-results.ndjson" "$output" "$report_mode" "$permission_drift_variant" <<'PY'
 from pathlib import Path
 import json
 import sys
@@ -284,7 +404,10 @@ for result in source["results"]:
 
 report = {
     "schema_version": "operational-drift-readiness-report/v1",
-    "issue": 25,
+    "issue_refs": [25, 45],
+    "focus": "multi-platform permission drift black-box regression",
+    "lane_filter": manifest.get("lane_filter", ""),
+    "permission_drift_variant": sys.argv[7],
     "mode": report_mode,
     "expected_current_mode": manifest["expected_current_mode"],
     "summary": {
