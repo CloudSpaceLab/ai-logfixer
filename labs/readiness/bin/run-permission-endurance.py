@@ -46,8 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", default="", help="Seed recorded for reproducible endurance runs.")
     parser.add_argument(
         "--variants",
-        default="mode-strict,missing,parent-no-exec",
-        help="Comma-separated permission-drift variants to sample. Supported: mode-strict,missing,parent-no-exec.",
+        default="mode-strict,missing,parent-no-exec,owner-root",
+        help="Comma-separated permission-drift variants to sample. Supported: mode-strict,missing,parent-no-exec,owner-root.",
     )
     parser.add_argument(
         "--artifacts",
@@ -134,7 +134,7 @@ def main() -> int:
         print("permission endurance requires --cycles or --duration-seconds", file=sys.stderr)
         return 2
     variants = [variant.strip() for variant in args.variants.split(",") if variant.strip()]
-    supported_variants = {"mode-strict", "missing", "parent-no-exec"}
+    supported_variants = {"mode-strict", "missing", "parent-no-exec", "owner-root"}
     unsupported = sorted(set(variants) - supported_variants)
     if not variants:
         print("--variants must include at least one permission-drift variant", file=sys.stderr)

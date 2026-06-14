@@ -219,6 +219,8 @@ func TestDockerLabScriptSupportsPermissionDriftVariants(t *testing.T) {
 		"rm -rf",
 		"parent-no-exec",
 		"chmod 0666",
+		"owner-root",
+		"chown -R root:root",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
@@ -294,6 +296,28 @@ func TestDockerLabScriptGeneratesParentNoExecForTopLevelPermissionPaths(t *testi
 	}
 }
 
+func TestDockerLabScriptGeneratesOwnerRootWithExpectedModeForEachPermissionScenario(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"owner-root)",
+		"expected_mode = policy.get(\"expected_mode\", \"0775\")",
+		"chown -R root:root \" + shlex.quote(container_path)",
+		"chmod \" + shlex.quote(expected_mode) + \" \" + shlex.quote(container_path)",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("owner-root variant must set wrong owner/group while preserving expected mode; missing %q", snippet)
+		}
+	}
+}
+
 func TestPermissionEnduranceRunnerExposesLongRunningBlackBoxLoop(t *testing.T) {
 	root := repoRoot(t)
 	runnerPath := filepath.Join(root, "labs", "readiness", "bin", "run-permission-endurance.py")
@@ -346,6 +370,31 @@ func TestPermissionEnduranceRunnerAcceptsParentNoExecVariant(t *testing.T) {
 	}
 	if strings.Contains(string(output), "unsupported permission-drift variants") {
 		t.Fatalf("parent-no-exec must be an accepted permission variant:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), `"cycles": 1`) {
+		t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))
+	}
+}
+
+func TestPermissionEnduranceRunnerAcceptsOwnerRootVariant(t *testing.T) {
+	root := repoRoot(t)
+	runnerPath := filepath.Join(root, "labs", "readiness", "bin", "run-permission-endurance.py")
+	artifacts := filepath.Join(t.TempDir(), "permission-endurance")
+	command := exec.Command(
+		"python3",
+		runnerPath,
+		"--candidate-command", "true",
+		"--cycles", "1",
+		"--variants", "owner-root",
+		"--artifacts", artifacts,
+		"--lab-script", "true",
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected stubbed lab run to fail readiness, got success:\n%s", string(output))
+	}
+	if strings.Contains(string(output), "unsupported permission-drift variants") {
+		t.Fatalf("owner-root must be an accepted permission variant:\n%s", string(output))
 	}
 	if !strings.Contains(string(output), `"cycles": 1`) {
 		t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))
