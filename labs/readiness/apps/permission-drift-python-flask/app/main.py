@@ -9,7 +9,9 @@ app = Flask(__name__)
 @app.get("/orders/readiness")
 def readiness():
     try:
-        Path("instance/audit.log").write_text("readiness audit\n")
+        Path("templates/readiness.txt").read_text()
+        with Path("instance/app.sqlite").open("a") as handle:
+            handle.write("readiness audit\n")
     except OSError as error:
         return jsonify({"detail": f"permission drift: {error}"}), 500
     return jsonify({"status": "FIXED", "lane": "permission-drift"})

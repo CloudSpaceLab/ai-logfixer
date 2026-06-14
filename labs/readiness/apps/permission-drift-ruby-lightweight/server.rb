@@ -18,6 +18,7 @@ loop do
     payload = {"error" => "not found"}
   else
     begin
+      File.read("public/status.txt")
       File.write("storage/audit.log", "readiness audit\n")
     rescue SystemCallError => error
       status = 500
