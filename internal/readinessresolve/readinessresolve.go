@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	contractsv1 "github.com/CloudSpaceLab/ai-logfixer/internal/contracts/v1"
@@ -51,16 +52,64 @@ type CandidateInput struct {
 }
 
 type Response struct {
-	SchemaVersion   string                          `json:"schema_version"`
-	ScenarioID      string                          `json:"scenario_id,omitempty"`
-	OperationalLane string                          `json:"operational_lane,omitempty"`
-	Supported       bool                            `json:"supported"`
-	Status          Status                          `json:"status"`
-	Message         string                          `json:"message"`
-	RemediationPlan *contractsv1.RemediationPlan    `json:"remediation_plan,omitempty"`
-	Attempt         *contractsv1.RemediationAttempt `json:"attempt,omitempty"`
-	Receipt         *contractsv1.Receipt            `json:"receipt,omitempty"`
-	BackupPath      string                          `json:"backup_path,omitempty"`
+	SchemaVersion     string                          `json:"schema_version"`
+	ScenarioID        string                          `json:"scenario_id,omitempty"`
+	OperationalLane   string                          `json:"operational_lane,omitempty"`
+	Supported         bool                            `json:"supported"`
+	Status            Status                          `json:"status"`
+	Message           string                          `json:"message"`
+	RemediationPlan   *contractsv1.RemediationPlan    `json:"remediation_plan,omitempty"`
+	Attempt           *contractsv1.RemediationAttempt `json:"attempt,omitempty"`
+	Receipt           *contractsv1.Receipt            `json:"receipt,omitempty"`
+	BackupPath        string                          `json:"backup_path,omitempty"`
+	RollbackPath      string                          `json:"rollback_path,omitempty"`
+	PermissionChanges []PermissionChange              `json:"permission_changes,omitempty"`
+}
+
+type PermissionChange struct {
+	Path          string `json:"path"`
+	Kind          string `json:"kind"`
+	Access        string `json:"access,omitempty"`
+	Action        string `json:"action"`
+	ExpectedOwner string `json:"expected_owner,omitempty"`
+	ExpectedGroup string `json:"expected_group,omitempty"`
+	ExpectedMode  string `json:"expected_mode"`
+	BeforeExists  bool   `json:"before_exists"`
+	BeforeMode    string `json:"before_mode,omitempty"`
+	BeforeOwner   string `json:"before_owner,omitempty"`
+	BeforeGroup   string `json:"before_group,omitempty"`
+	AfterExists   bool   `json:"after_exists"`
+	AfterMode     string `json:"after_mode,omitempty"`
+	AfterOwner    string `json:"after_owner,omitempty"`
+	AfterGroup    string `json:"after_group,omitempty"`
+}
+
+type permissionState struct {
+	Exists bool
+	IsDir  bool
+	Mode   string
+	Owner  string
+	Group  string
+}
+
+type permissionRollbackManifest struct {
+	SchemaVersion string                            `json:"schema_version"`
+	ScenarioID    string                            `json:"scenario_id"`
+	CreatedAt     time.Time                         `json:"created_at"`
+	Changes       []permissionRollbackManifestEntry `json:"changes"`
+}
+
+type permissionRollbackManifestEntry struct {
+	Path         string `json:"path"`
+	Kind         string `json:"kind"`
+	BeforeExists bool   `json:"before_exists"`
+	BeforeMode   string `json:"before_mode,omitempty"`
+	BeforeOwner  string `json:"before_owner,omitempty"`
+	BeforeGroup  string `json:"before_group,omitempty"`
+	AfterExists  bool   `json:"after_exists"`
+	AfterMode    string `json:"after_mode,omitempty"`
+	AfterOwner   string `json:"after_owner,omitempty"`
+	AfterGroup   string `json:"after_group,omitempty"`
 }
 
 func LoadCandidateInput(path string) (CandidateInput, error) {
@@ -311,6 +360,7 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 	if err != nil {
 		return Response{}, err
 	}
+	var changes []PermissionChange
 	for _, target := range policy.Targets {
 		relativePath := target.Path
 		mode, err := parsePermissionMode(target.ExpectedMode)
@@ -321,52 +371,31 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 			return Response{}, fmt.Errorf("resolve allowlisted permission path: %w", err)
 		}
 		if hasDockerTarget(input) {
-			if err := dockerRepairPermissions(ctx, input, target, policy); err != nil {
+			targetChanges, err := dockerRepairPermissions(ctx, input, target, policy)
+			if err != nil {
 				return Response{}, err
 			}
+			changes = append(changes, targetChanges...)
 			continue
 		}
-		path, _ := joinInsideApp(input.AppDir, relativePath)
-		switch target.Kind {
-		case "dir":
-			if err := os.MkdirAll(path, mode); err != nil {
-				return Response{}, fmt.Errorf("mkdir %s: %w", relativePath, err)
-			}
-			if err := os.Chmod(path, mode); err != nil {
-				return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
-			}
-		case "file":
-			if err := repairFileParentSearchPermission(input.AppDir, target, policy); err != nil {
-				return Response{}, err
-			}
-			info, err := os.Stat(path)
-			if os.IsNotExist(err) && target.Access == "write" {
-				file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-				if createErr != nil {
-					return Response{}, fmt.Errorf("create writable file target %s: %w", relativePath, createErr)
-				}
-				if closeErr := file.Close(); closeErr != nil {
-					return Response{}, fmt.Errorf("close writable file target %s: %w", relativePath, closeErr)
-				}
-				info, err = os.Stat(path)
-			}
-			if err != nil {
-				return Response{}, fmt.Errorf("stat %s: %w", relativePath, err)
-			}
-			if info.IsDir() {
-				return Response{}, fmt.Errorf("permission target %s is a directory, expected file", relativePath)
-			}
-			if err := os.Chmod(path, mode); err != nil {
-				return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
-			}
-		default:
-			return Response{}, fmt.Errorf("permission target %s has unsupported kind %q", relativePath, target.Kind)
+		targetChanges, err := repairLocalPermissions(input.AppDir, target, policy, mode)
+		if err != nil {
+			return Response{}, err
 		}
+		changes = append(changes, targetChanges...)
+	}
+	rollbackPath, err := writePermissionRollbackManifest(input, changes)
+	if err != nil {
+		return Response{}, err
 	}
 	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
 		return Response{}, err
 	}
-	return baseResponse(input, StatusResolved, true, "permission-drift resolver completed"), nil
+	response := baseResponse(input, StatusResolved, true, "permission-drift resolver completed")
+	response.PermissionChanges = changes
+	response.RollbackPath = rollbackPath
+	response.RemediationPlan, response.Attempt, response.Receipt = buildPermissionResolutionContracts(input, changes, rollbackPath)
+	return response, nil
 }
 
 func resolveRestartReload(ctx context.Context, input CandidateInput) (Response, error) {
@@ -691,19 +720,108 @@ func hasDockerTarget(input CandidateInput) bool {
 		strings.TrimSpace(input.DockerService) != ""
 }
 
-func repairFileParentSearchPermission(appDir string, target permissionTarget, policy permissionPolicy) error {
+func repairLocalPermissions(appDir string, target permissionTarget, policy permissionPolicy, mode os.FileMode) ([]PermissionChange, error) {
+	path, err := joinInsideApp(appDir, target.Path)
+	if err != nil {
+		return nil, err
+	}
+	var changes []PermissionChange
+	switch target.Kind {
+	case "dir":
+		before, err := localPermissionState(appDir, target.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.MkdirAll(path, mode); err != nil {
+			return nil, fmt.Errorf("mkdir %s: %w", target.Path, err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			return nil, fmt.Errorf("chmod %s: %w", target.Path, err)
+		}
+		after, err := localPermissionState(appDir, target.Path)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, newPermissionChange(target, "repair_dir_permissions", before, after))
+	case "file":
+		parentChange, err := repairFileParentSearchPermission(appDir, target, policy)
+		if err != nil {
+			return nil, err
+		}
+		if parentChange != nil {
+			changes = append(changes, *parentChange)
+		}
+		before, err := localPermissionState(appDir, target.Path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(path)
+		created := false
+		if os.IsNotExist(err) && target.Access == "write" {
+			file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+			if createErr != nil {
+				return nil, fmt.Errorf("create writable file target %s: %w", target.Path, createErr)
+			}
+			if closeErr := file.Close(); closeErr != nil {
+				return nil, fmt.Errorf("close writable file target %s: %w", target.Path, closeErr)
+			}
+			created = true
+			info, err = os.Stat(path)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("stat %s: %w", target.Path, err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("permission target %s is a directory, expected file", target.Path)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			return nil, fmt.Errorf("chmod %s: %w", target.Path, err)
+		}
+		after, err := localPermissionState(appDir, target.Path)
+		if err != nil {
+			return nil, err
+		}
+		action := "repair_file_permissions"
+		if created {
+			action = "create_writable_file"
+		}
+		changes = append(changes, newPermissionChange(target, action, before, after))
+	default:
+		return nil, fmt.Errorf("permission target %s has unsupported kind %q", target.Path, target.Kind)
+	}
+	return changes, nil
+}
+
+func repairFileParentSearchPermission(appDir string, target permissionTarget, policy permissionPolicy) (*PermissionChange, error) {
 	parent, ok := fileParentSearchPath(target, policy)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	parentPath, err := joinInsideApp(appDir, parent)
 	if err != nil {
-		return fmt.Errorf("resolve permission parent path: %w", err)
+		return nil, fmt.Errorf("resolve permission parent path: %w", err)
+	}
+	before, err := localPermissionState(appDir, parent)
+	if err != nil {
+		return nil, err
 	}
 	if err := os.Chmod(parentPath, 0o711); err != nil {
-		return fmt.Errorf("chmod parent %s: %w", parent, err)
+		return nil, fmt.Errorf("chmod parent %s: %w", parent, err)
 	}
-	return nil
+	after, err := localPermissionState(appDir, parent)
+	if err != nil {
+		return nil, err
+	}
+	parentTarget := permissionTarget{
+		Path:          parent,
+		Kind:          "dir",
+		Access:        "search",
+		ExpectedOwner: target.ExpectedOwner,
+		ExpectedGroup: target.ExpectedGroup,
+		ExpectedMode:  "0711",
+	}
+	change := newPermissionChange(parentTarget, "repair_parent_search_permission", before, after)
+	return &change, nil
 }
 
 func fileParentSearchPath(target permissionTarget, policy permissionPolicy) (string, bool) {
@@ -722,31 +840,334 @@ func fileParentSearchPath(target permissionTarget, policy permissionPolicy) (str
 	return parent, true
 }
 
-func dockerRepairPermissions(ctx context.Context, input CandidateInput, target permissionTarget, policy permissionPolicy) error {
+func localPermissionState(appDir string, relativePath string) (permissionState, error) {
+	path, err := joinInsideApp(appDir, relativePath)
+	if err != nil {
+		return permissionState{}, err
+	}
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return permissionState{Exists: false}, nil
+	}
+	if err != nil {
+		return permissionState{}, fmt.Errorf("stat %s: %w", relativePath, err)
+	}
+	state := permissionState{
+		Exists: true,
+		IsDir:  info.IsDir(),
+		Mode:   formatPermissionMode(info.Mode().Perm()),
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		state.Owner = strconv.FormatUint(uint64(stat.Uid), 10)
+		state.Group = strconv.FormatUint(uint64(stat.Gid), 10)
+	}
+	return state, nil
+}
+
+func dockerPermissionState(ctx context.Context, input CandidateInput, relativePath string) (permissionState, error) {
+	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(relativePath))
+	script := fmt.Sprintf("if [ -e %s ]; then stat -c 'exists\t%%F\t%%a\t%%u\t%%g' %s; else echo missing; fi", shellQuote(containerPath), shellQuote(containerPath))
+	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "exec", "-T", "-u", "root", input.DockerService, "sh", "-lc", script}
+	command := exec.CommandContext(ctx, "docker", args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return permissionState{}, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "missing" {
+		return permissionState{Exists: false}, nil
+	}
+	fields := strings.Split(trimmed, "\t")
+	if len(fields) != 5 || fields[0] != "exists" {
+		return permissionState{}, fmt.Errorf("parse docker permission state for %s: %q", relativePath, trimmed)
+	}
+	return permissionState{
+		Exists: true,
+		IsDir:  strings.Contains(strings.ToLower(fields[1]), "directory"),
+		Mode:   normalizeModeString(fields[2]),
+		Owner:  fields[3],
+		Group:  fields[4],
+	}, nil
+}
+
+func newPermissionChange(target permissionTarget, action string, before permissionState, after permissionState) PermissionChange {
+	return PermissionChange{
+		Path:          filepath.ToSlash(filepath.Clean(target.Path)),
+		Kind:          target.Kind,
+		Access:        target.Access,
+		Action:        action,
+		ExpectedOwner: target.ExpectedOwner,
+		ExpectedGroup: target.ExpectedGroup,
+		ExpectedMode:  normalizeModeString(target.ExpectedMode),
+		BeforeExists:  before.Exists,
+		BeforeMode:    before.Mode,
+		BeforeOwner:   before.Owner,
+		BeforeGroup:   before.Group,
+		AfterExists:   after.Exists,
+		AfterMode:     after.Mode,
+		AfterOwner:    after.Owner,
+		AfterGroup:    after.Group,
+	}
+}
+
+func writePermissionRollbackManifest(input CandidateInput, changes []PermissionChange) (string, error) {
+	if len(changes) == 0 {
+		return "", nil
+	}
+	root := permissionRollbackRoot(input)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", fmt.Errorf("create permission rollback directory: %w", err)
+	}
+	manifest := permissionRollbackManifest{
+		SchemaVersion: "ai-logfixer-permission-rollback/v1",
+		ScenarioID:    input.ScenarioID,
+		CreatedAt:     time.Now().UTC(),
+		Changes:       make([]permissionRollbackManifestEntry, 0, len(changes)),
+	}
+	for _, change := range changes {
+		manifest.Changes = append(manifest.Changes, permissionRollbackManifestEntry{
+			Path:         change.Path,
+			Kind:         change.Kind,
+			BeforeExists: change.BeforeExists,
+			BeforeMode:   change.BeforeMode,
+			BeforeOwner:  change.BeforeOwner,
+			BeforeGroup:  change.BeforeGroup,
+			AfterExists:  change.AfterExists,
+			AfterMode:    change.AfterMode,
+			AfterOwner:   change.AfterOwner,
+			AfterGroup:   change.AfterGroup,
+		})
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode permission rollback manifest: %w", err)
+	}
+	path := filepath.Join(root, sanitizeFilename(firstNonEmpty(input.ScenarioID, "permission-drift"))+"-rollback.json")
+	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
+		return "", fmt.Errorf("write permission rollback manifest: %w", err)
+	}
+	return path, nil
+}
+
+func permissionRollbackRoot(input CandidateInput) string {
+	if strings.TrimSpace(input.InventoryDir) != "" {
+		return filepath.Join(filepath.Dir(filepath.Clean(input.InventoryDir)), "permission-rollbacks")
+	}
+	return filepath.Join(input.AppDir, ".ai-logfixer", "permission-rollbacks")
+}
+
+func buildPermissionResolutionContracts(input CandidateInput, changes []PermissionChange, rollbackPath string) (*contractsv1.RemediationPlan, *contractsv1.RemediationAttempt, *contractsv1.Receipt) {
+	now := time.Now().UTC()
+	finished := now.Add(time.Second)
+	idBase := sanitizeFilename(firstNonEmpty(input.ScenarioID, input.ServiceName, "permission-drift"))
+	planID := "rem-plan-permission-drift-" + idBase
+	attemptID := "rem-attempt-permission-drift-" + idBase
+	receiptID := "receipt-permission-drift-" + idBase
+	rollbackRefs := []string{}
+	if rollbackPath != "" {
+		rollbackRefs = append(rollbackRefs, rollbackPath)
+	}
+	before := permissionChangesBeforeSummary(changes)
+	after := permissionChangesAfterSummary(changes)
+	plan := &contractsv1.RemediationPlan{
+		ID:                planID,
+		ContractVersion:   contractsv1.ContractVersion,
+		SchemaURL:         contractsv1.RemediationPlanSchemaURL,
+		DiagnosisResultID: "diag-permission-drift-" + idBase,
+		Summary:           "Apply bounded permission-drift repairs to allowlisted targets.",
+		FixPreview:        contractsv1.DiffPreview{Before: before, After: permissionChangesActionSummary(changes)},
+		RollbackPlan: contractsv1.RollbackPlan{
+			ID:                   "rollback-permission-drift-" + idBase,
+			RollbackType:         contractsv1.RollbackReversePatch,
+			SnapshotRefs:         rollbackRefs,
+			RestoreSteps:         []string{"Restore recorded owner/group/mode state from the permission rollback manifest.", "Re-run permission probes.", "Verify service health."},
+			Limitations:          []string{"Rollback manifest records exact path state; automated rollback execution is handled outside this readiness resolver."},
+			RiskLevel:            contractsv1.SafetyLowRisk,
+			RequiresManualReview: false,
+		},
+		RiskLevel:        contractsv1.SafetyLowRisk,
+		ApprovalRequired: false,
+		Status:           contractsv1.RemediationStatusSucceeded,
+		DisplayStatus:    "Permission repair verified",
+		UserMessage:      "AI LogFixer repaired allowlisted permission drift and recorded rollback evidence.",
+		NextActions:      []contractsv1.NextAction{},
+		TimelineEvents:   []contractsv1.TimelineEvent{{ID: "tl-permission-plan-" + idBase, Type: "remediation.plan_created", Message: "Permission remediation plan recorded.", Severity: "info", Timestamp: now}},
+		ExternalRefs:     []contractsv1.ExternalRef{},
+		KnowledgeRefs:    []contractsv1.KnowledgeRef{},
+		CreatedAt:        now,
+	}
+	attempt := &contractsv1.RemediationAttempt{
+		ID:                  attemptID,
+		ContractVersion:     contractsv1.ContractVersion,
+		SchemaURL:           contractsv1.RemediationAttemptSchemaURL,
+		RemediationPlanID:   planID,
+		ApprovalRequestID:   "auto-approved-readiness-permission-drift",
+		Status:              contractsv1.RemediationStatusSucceeded,
+		ExecutionStartedAt:  &now,
+		ExecutionFinishedAt: &finished,
+		MonitorSummary: contractsv1.MonitorSummary{
+			Status:   "healthy",
+			Message:  "Permission drift repair verified by live probe.",
+			Signals:  []string{"permission_changes=" + strconv.Itoa(len(changes)), "service=" + input.ServiceName},
+			Duration: "1s",
+		},
+		DisplayStatus:  "Permission repair verified",
+		UserMessage:    "AI LogFixer verified the app after permission repair.",
+		TimelineEvents: []contractsv1.TimelineEvent{{ID: "tl-permission-attempt-" + idBase, Type: "remediation.succeeded", Message: "Permission remediation attempt succeeded.", Severity: "info", Timestamp: finished}},
+		ExternalRefs:   []contractsv1.ExternalRef{},
+	}
+	receipt := &contractsv1.Receipt{
+		ID:                   receiptID,
+		DiagnosisID:          "diag-permission-drift-" + idBase,
+		RemediationPlanID:    planID,
+		RemediationAttemptID: attemptID,
+		ActionTaken:          permissionChangesActionSummary(changes),
+		Actor:                "ai-logfixer-readiness-resolve",
+		Approver:             "auto-approved-readiness-permission-drift",
+		Timestamp:            finished,
+		BeforeState:          before,
+		AfterState:           after,
+		Outcome:              "succeeded",
+		Summary:              "AI LogFixer repaired permission drift, verified recovery, and wrote rollback evidence.",
+		TimelineEvents:       []contractsv1.TimelineEvent{{ID: "tl-permission-receipt-" + idBase, Type: "receipt.created", Message: "Permission remediation receipt recorded.", Severity: "info", Timestamp: finished}},
+		ExternalRefs:         []contractsv1.ExternalRef{},
+		KnowledgeRefs:        []contractsv1.KnowledgeRef{},
+	}
+	return plan, attempt, receipt
+}
+
+func permissionChangesBeforeSummary(changes []PermissionChange) string {
+	parts := make([]string, 0, len(changes))
+	for _, change := range changes {
+		parts = append(parts, fmt.Sprintf("%s exists=%t mode=%s owner=%s group=%s", change.Path, change.BeforeExists, change.BeforeMode, change.BeforeOwner, change.BeforeGroup))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func permissionChangesAfterSummary(changes []PermissionChange) string {
+	parts := make([]string, 0, len(changes))
+	for _, change := range changes {
+		parts = append(parts, fmt.Sprintf("%s exists=%t mode=%s owner=%s group=%s", change.Path, change.AfterExists, change.AfterMode, change.AfterOwner, change.AfterGroup))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func permissionChangesActionSummary(changes []PermissionChange) string {
+	parts := make([]string, 0, len(changes))
+	for _, change := range changes {
+		parts = append(parts, fmt.Sprintf("%s %s %s->%s", change.Action, change.Path, defaultString(change.BeforeMode, "missing"), defaultString(change.AfterMode, "missing")))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func defaultString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatPermissionMode(mode os.FileMode) string {
+	return fmt.Sprintf("%04o", mode.Perm())
+}
+
+func normalizeModeString(mode string) string {
+	trimmed := strings.TrimSpace(mode)
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) >= 4 {
+		return trimmed
+	}
+	return strings.Repeat("0", 4-len(trimmed)) + trimmed
+}
+
+func sanitizeFilename(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			continue
+		}
+		if r == '-' || r == '_' || r == '.' {
+			builder.WriteRune(r)
+			continue
+		}
+		builder.WriteByte('-')
+	}
+	out := strings.Trim(builder.String(), "-.")
+	if out == "" {
+		return "permission-drift"
+	}
+	return out
+}
+
+func dockerRepairPermissions(ctx context.Context, input CandidateInput, target permissionTarget, policy permissionPolicy) ([]PermissionChange, error) {
 	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(target.Path))
 	owner := firstNonEmpty(target.ExpectedOwner, policy.ExpectedOwner, "app")
 	group := firstNonEmpty(target.ExpectedGroup, policy.ExpectedGroup, owner)
 	mode := target.ExpectedMode
+	var changes []PermissionChange
+	var parentTarget permissionTarget
+	var parentBefore permissionState
+	hasParentChange := false
 	var script string
 	if target.Kind == "file" {
 		if parent, ok := fileParentSearchPath(target, policy); ok {
 			containerParent := "/app/" + filepath.ToSlash(parent)
+			before, err := dockerPermissionState(ctx, input, parent)
+			if err != nil {
+				return nil, err
+			}
+			parentBefore = before
 			script = fmt.Sprintf("test -d %s && chmod 0711 %s && ", shellQuote(containerParent), shellQuote(containerParent))
+			parentTarget = permissionTarget{
+				Path:          parent,
+				Kind:          "dir",
+				Access:        "search",
+				ExpectedOwner: target.ExpectedOwner,
+				ExpectedGroup: target.ExpectedGroup,
+				ExpectedMode:  "0711",
+			}
+			hasParentChange = true
 		}
 		if target.Access == "write" {
 			script += fmt.Sprintf("if [ ! -e %s ]; then : > %s; fi && ", shellQuote(containerPath), shellQuote(containerPath))
 		}
 		script += fmt.Sprintf("test -f %s && chown %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
 	} else {
-		script = fmt.Sprintf("mkdir -p %s && chown -R %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
+		script = fmt.Sprintf("mkdir -p %s && chown %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
+	}
+	before, err := dockerPermissionState(ctx, input, target.Path)
+	if err != nil {
+		return nil, err
 	}
 	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "exec", "-T", "-u", "root", input.DockerService, "sh", "-lc", script}
 	command := exec.CommandContext(ctx, "docker", args...)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		return nil, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
-	return nil
+	after, err := dockerPermissionState(ctx, input, target.Path)
+	if err != nil {
+		return nil, err
+	}
+	if hasParentChange {
+		parentAfter, err := dockerPermissionState(ctx, input, parentTarget.Path)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, newPermissionChange(parentTarget, "repair_parent_search_permission", parentBefore, parentAfter))
+	}
+	action := "repair_dir_permissions"
+	if target.Kind == "file" {
+		action = "repair_file_permissions"
+		if !before.Exists && target.Access == "write" {
+			action = "create_writable_file"
+		}
+	}
+	changes = append(changes, newPermissionChange(target, action, before, after))
+	return changes, nil
 }
 
 func dockerPackageVerifyCommand(input CandidateInput, packageFile string, verifyURL string, expectedStatus int, bodyContains string) string {
