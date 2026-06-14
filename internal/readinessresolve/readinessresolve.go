@@ -389,7 +389,15 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 		return Response{}, err
 	}
 	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
-		return Response{}, err
+		rollbackErr := rollbackPermissionChanges(input, changes)
+		response := baseResponse(input, StatusFailed, true, "permission-drift verification failed after repair; rollback attempted")
+		response.PermissionChanges = changes
+		response.RollbackPath = rollbackPath
+		response.RemediationPlan, response.Attempt, response.Receipt = buildPermissionRollbackContracts(input, changes, rollbackPath, err, rollbackErr)
+		if rollbackErr != nil {
+			return response, fmt.Errorf("permission-drift verification failed: %w; rollback failed: %v", err, rollbackErr)
+		}
+		return response, fmt.Errorf("permission-drift verification failed: %w; rolled back permission changes", err)
 	}
 	response := baseResponse(input, StatusResolved, true, "permission-drift resolver completed")
 	response.PermissionChanges = changes
@@ -949,6 +957,94 @@ func writePermissionRollbackManifest(input CandidateInput, changes []PermissionC
 	return path, nil
 }
 
+func rollbackPermissionChanges(input CandidateInput, changes []PermissionChange) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	if hasDockerTarget(input) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return rollbackDockerPermissionChanges(ctx, input, changes)
+	}
+	var errs []error
+	for i := len(changes) - 1; i >= 0; i-- {
+		if err := rollbackLocalPermissionChange(input.AppDir, changes[i]); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func rollbackLocalPermissionChange(appDir string, change PermissionChange) error {
+	path, err := joinInsideApp(appDir, change.Path)
+	if err != nil {
+		return err
+	}
+	if !change.BeforeExists {
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove created permission path %s: %w", change.Path, err)
+		}
+		return nil
+	}
+	if change.BeforeOwner != "" && change.BeforeGroup != "" && (change.BeforeOwner != change.AfterOwner || change.BeforeGroup != change.AfterGroup) {
+		uid, err := strconv.Atoi(change.BeforeOwner)
+		if err != nil {
+			return fmt.Errorf("parse rollback owner %q for %s: %w", change.BeforeOwner, change.Path, err)
+		}
+		gid, err := strconv.Atoi(change.BeforeGroup)
+		if err != nil {
+			return fmt.Errorf("parse rollback group %q for %s: %w", change.BeforeGroup, change.Path, err)
+		}
+		if err := os.Chown(path, uid, gid); err != nil {
+			return fmt.Errorf("chown rollback %s: %w", change.Path, err)
+		}
+	}
+	if strings.TrimSpace(change.BeforeMode) != "" {
+		mode, err := parsePermissionMode(change.BeforeMode)
+		if err != nil {
+			return fmt.Errorf("parse rollback mode for %s: %w", change.Path, err)
+		}
+		if err := os.Chmod(path, mode); err != nil {
+			return fmt.Errorf("chmod rollback %s: %w", change.Path, err)
+		}
+	}
+	return nil
+}
+
+func rollbackDockerPermissionChanges(ctx context.Context, input CandidateInput, changes []PermissionChange) error {
+	var errs []error
+	for i := len(changes) - 1; i >= 0; i-- {
+		if err := rollbackDockerPermissionChange(ctx, input, changes[i]); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func rollbackDockerPermissionChange(ctx context.Context, input CandidateInput, change PermissionChange) error {
+	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(change.Path))
+	var script string
+	if !change.BeforeExists {
+		script = fmt.Sprintf("rm -rf -- %s", shellQuote(containerPath))
+	} else {
+		steps := []string{fmt.Sprintf("test -e %s", shellQuote(containerPath))}
+		if change.BeforeOwner != "" && change.BeforeGroup != "" && (change.BeforeOwner != change.AfterOwner || change.BeforeGroup != change.AfterGroup) {
+			steps = append(steps, fmt.Sprintf("chown %s:%s %s", shellQuote(change.BeforeOwner), shellQuote(change.BeforeGroup), shellQuote(containerPath)))
+		}
+		if strings.TrimSpace(change.BeforeMode) != "" {
+			steps = append(steps, fmt.Sprintf("chmod %s %s", shellQuote(change.BeforeMode), shellQuote(containerPath)))
+		}
+		script = strings.Join(steps, " && ")
+	}
+	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "exec", "-T", "-u", "root", input.DockerService, "sh", "-lc", script}
+	command := exec.CommandContext(ctx, "docker", args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker rollback %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func permissionRollbackRoot(input CandidateInput) string {
 	if strings.TrimSpace(input.InventoryDir) != "" {
 		return filepath.Join(filepath.Dir(filepath.Clean(input.InventoryDir)), "permission-rollbacks")
@@ -981,7 +1077,7 @@ func buildPermissionResolutionContracts(input CandidateInput, changes []Permissi
 			RollbackType:         contractsv1.RollbackReversePatch,
 			SnapshotRefs:         rollbackRefs,
 			RestoreSteps:         []string{"Restore recorded owner/group/mode state from the permission rollback manifest.", "Re-run permission probes.", "Verify service health."},
-			Limitations:          []string{"Rollback manifest records exact path state; automated rollback execution is handled outside this readiness resolver."},
+			Limitations:          []string{"Rollback restores only the exact paths changed by this permission repair."},
 			RiskLevel:            contractsv1.SafetyLowRisk,
 			RequiresManualReview: false,
 		},
@@ -1033,6 +1129,45 @@ func buildPermissionResolutionContracts(input CandidateInput, changes []Permissi
 		ExternalRefs:         []contractsv1.ExternalRef{},
 		KnowledgeRefs:        []contractsv1.KnowledgeRef{},
 	}
+	return plan, attempt, receipt
+}
+
+func buildPermissionRollbackContracts(input CandidateInput, changes []PermissionChange, rollbackPath string, verificationErr error, rollbackErr error) (*contractsv1.RemediationPlan, *contractsv1.RemediationAttempt, *contractsv1.Receipt) {
+	plan, attempt, receipt := buildPermissionResolutionContracts(input, changes, rollbackPath)
+	rolledBack := rollbackErr == nil
+	status := contractsv1.RemediationStatusRolledBack
+	displayStatus := "Permission repair rolled back"
+	outcome := "rolled_back"
+	afterState := permissionChangesBeforeSummary(changes)
+	summary := "AI LogFixer repaired permission drift, verification failed, and recorded rollback evidence after restoring changed paths."
+	monitorStatus := "rolled_back"
+	monitorMessage := "Permission drift repair failed verification; changed paths were rolled back."
+	if !rolledBack {
+		status = contractsv1.RemediationStatusFailed
+		displayStatus = "Permission rollback failed"
+		outcome = "rollback_failed"
+		afterState = permissionChangesAfterSummary(changes)
+		summary = "AI LogFixer repaired permission drift, verification failed, and rollback failed."
+		monitorStatus = "rollback_failed"
+		monitorMessage = "Permission drift repair failed verification and rollback did not complete."
+	}
+	plan.Status = status
+	plan.DisplayStatus = displayStatus
+	plan.UserMessage = monitorMessage
+	attempt.Status = status
+	attempt.DisplayStatus = displayStatus
+	attempt.UserMessage = monitorMessage
+	attempt.RollbackAttemptID = "rollback-" + attempt.ID
+	attempt.MonitorSummary.Status = monitorStatus
+	attempt.MonitorSummary.Message = monitorMessage
+	attempt.MonitorSummary.Signals = append(attempt.MonitorSummary.Signals, "verification_error="+verificationErr.Error())
+	if rollbackErr != nil {
+		attempt.MonitorSummary.Signals = append(attempt.MonitorSummary.Signals, "rollback_error="+rollbackErr.Error())
+	}
+	receipt.Outcome = outcome
+	receipt.AfterState = afterState
+	receipt.Summary = summary
+	receipt.ActionTaken = permissionChangesActionSummary(changes) + "; rollback " + outcome
 	return plan, attempt, receipt
 }
 
@@ -1217,6 +1352,9 @@ func verifyLiveProbe(ctx context.Context, input CandidateInput, verification pol
 	deadline := time.Now().Add(20 * time.Second)
 	var last string
 	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("verify live probe %s canceled: %w", verifyURL, err)
+		}
 		status, body, err := getHTTP(ctx, verifyURL)
 		if err == nil && status == expectedStatus && (bodyContains == "" || strings.Contains(body, bodyContains)) {
 			return nil
@@ -1229,7 +1367,11 @@ func verifyLiveProbe(ctx context.Context, input CandidateInput, verification pol
 		if time.Now().After(deadline) {
 			return fmt.Errorf("verify live probe %s failed: %s", verifyURL, last)
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("verify live probe %s canceled: %w", verifyURL, ctx.Err())
+		case <-time.After(time.Second):
+		}
 	}
 }
 
