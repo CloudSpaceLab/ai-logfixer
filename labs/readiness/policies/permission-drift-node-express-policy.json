@@ -3,6 +3,26 @@
   "allowed_paths": [
     "uploads"
   ],
+  "permission_targets": [
+    {
+      "path": "uploads",
+      "kind": "dir",
+      "access": "write",
+      "expected_mode": "0775"
+    },
+    {
+      "path": "config/readiness.json",
+      "kind": "file",
+      "access": "read",
+      "expected_mode": "0644"
+    },
+    {
+      "path": "uploads/audit.log",
+      "kind": "file",
+      "access": "write",
+      "expected_mode": "0664"
+    }
+  ],
   "expected_owner": "app",
   "expected_group": "app",
   "expected_mode": "0775",

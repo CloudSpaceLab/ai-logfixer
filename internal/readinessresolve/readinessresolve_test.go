@@ -252,6 +252,244 @@ func TestResolvePermissionDriftCreatesMissingAllowlistedPath(t *testing.T) {
 	}
 }
 
+func TestResolvePermissionDriftRepairsAllowlistedFileTarget(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	configDir := filepath.Join(appDir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	configFile := filepath.Join(configDir, "readiness.json")
+	if err := os.WriteFile(configFile, []byte(`{"status":"FIXED"}`+"\n"), 0o400); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane": "permission-drift",
+		"permission_targets": []map[string]any{
+			{
+				"path":          "config/readiness.json",
+				"kind":          "file",
+				"access":        "read",
+				"expected_mode": "0644",
+			},
+		},
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: open config/readiness.json: permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		raw, err := os.ReadFile(configFile)
+		if err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write(raw)
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-file-local",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-file-local",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve permission file drift: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved permission response, got %+v", response)
+	}
+	info, err := os.Stat(configFile)
+	if err != nil {
+		t.Fatalf("stat config file: %v", err)
+	}
+	if info.IsDir() {
+		t.Fatalf("file permission repair must not convert %s into a directory", configFile)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("expected file mode 0644, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolvePermissionDriftRepairsFileParentSearchPermission(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	configDir := filepath.Join(appDir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	configFile := filepath.Join(configDir, "readiness.json")
+	if err := os.WriteFile(configFile, []byte(`{"status":"FIXED"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+	if err := os.Chmod(configDir, 0o666); err != nil {
+		t.Fatalf("remove parent search permission: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(configDir, 0o755)
+	})
+
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane": "permission-drift",
+		"permission_targets": []map[string]any{
+			{
+				"path":          "config/readiness.json",
+				"kind":          "file",
+				"access":        "read",
+				"expected_mode": "0644",
+			},
+		},
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: open config/readiness.json: permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		raw, err := os.ReadFile(configFile)
+		if err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write(raw)
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-file-parent-local",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-file-parent-local",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve parent search permission drift: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved permission response, got %+v", response)
+	}
+
+	info, err := os.Stat(configDir)
+	if err != nil {
+		t.Fatalf("stat config dir: %v", err)
+	}
+	if info.Mode().Perm() != 0o711 {
+		t.Fatalf("expected parent search repair to set 0711, got %04o", info.Mode().Perm())
+	}
+	if info.Mode().Perm()&0o002 != 0 {
+		t.Fatalf("parent search repair must not leave world-writable permissions, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolvePermissionDriftCreatesMissingWritableFileTarget(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	dataDir := filepath.Join(appDir, "data")
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane": "permission-drift",
+		"permission_targets": []map[string]any{
+			{
+				"path":          "data",
+				"kind":          "dir",
+				"access":        "write",
+				"expected_mode": "0775",
+			},
+			{
+				"path":          "data/app.sqlite",
+				"kind":          "file",
+				"access":        "write",
+				"expected_mode": "0664",
+			},
+		},
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: open data/app.sqlite: no such file or directory\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "app.sqlite")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		file, err := os.OpenFile(dbPath, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer file.Close()
+		if _, err := file.WriteString("readiness audit\n"); err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-missing-file-local",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-missing-file-local",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve missing writable file target: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved permission response, got %+v", response)
+	}
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("writable file target should be created: %v", err)
+	}
+	if info.IsDir() {
+		t.Fatalf("writable file target must be a file, got directory")
+	}
+	if info.Mode().Perm() != 0o664 {
+		t.Fatalf("expected writable file mode 0664, got %04o", info.Mode().Perm())
+	}
+}
+
 func TestResolvePermissionDriftRejectsWorldWritablePolicy(t *testing.T) {
 	t.Parallel()
 

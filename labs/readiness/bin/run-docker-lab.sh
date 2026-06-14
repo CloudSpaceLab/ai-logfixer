@@ -141,97 +141,123 @@ apply_permission_drift_variant() {
     ""|mode-strict)
       return 0
       ;;
-    missing)
-      while IFS=$'\t' read -r service command; do
-        "${compose[@]}" exec -T -u root "$service" sh -lc "$command" < /dev/null
-      done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
-from pathlib import Path
-import json
-import shlex
-import sys
-
-manifest = json.loads(Path(sys.argv[1]).read_text())
-lab_root = Path(sys.argv[2]).resolve()
-for scenario in manifest["scenarios"]:
-    if scenario["operational_lane"] != "permission-drift":
-        continue
-    policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-    commands = []
-    for relative_path in policy.get("allowed_paths", []):
-        container_path = "/app/" + relative_path.strip("/")
-        commands.append("rm -rf " + shlex.quote(container_path))
-    if commands:
-        print("\t".join([scenario["docker_service"], " && ".join(commands)]))
-PY
-      )
-      ;;
-    parent-no-exec)
-      while IFS=$'\t' read -r service command; do
-        "${compose[@]}" exec -T -u root "$service" sh -lc "$command" < /dev/null
-      done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
-from pathlib import PurePosixPath
-from pathlib import Path
-import json
-import shlex
-import sys
-
-manifest = json.loads(Path(sys.argv[1]).read_text())
-lab_root = Path(sys.argv[2]).resolve()
-for scenario in manifest["scenarios"]:
-    if scenario["operational_lane"] != "permission-drift":
-        continue
-    policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-    search_paths = []
-    seen = set()
-    for relative_path in policy.get("allowed_paths", []):
-        path = PurePosixPath(relative_path.strip("/"))
-        parent = path.parent
-        if str(parent) in ("", "."):
-            container_search_path = "/app/" + str(path)
-        else:
-            container_search_path = "/app/" + str(parent)
-        if container_search_path in seen:
-            continue
-        seen.add(container_search_path)
-        search_paths.append(container_search_path)
-    commands = ["chmod 0666 " + shlex.quote(search_path) for search_path in search_paths]
-    if commands:
-        print("\t".join([scenario["docker_service"], " && ".join(commands)]))
-PY
-      )
-      ;;
-    owner-root)
-      while IFS=$'\t' read -r service command; do
-        "${compose[@]}" exec -T -u root "$service" sh -lc "$command" < /dev/null
-      done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
-from pathlib import Path
-import json
-import shlex
-import sys
-
-manifest = json.loads(Path(sys.argv[1]).read_text())
-lab_root = Path(sys.argv[2]).resolve()
-for scenario in manifest["scenarios"]:
-    if scenario["operational_lane"] != "permission-drift":
-        continue
-    policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-    expected_mode = policy.get("expected_mode", "0775")
-    commands = []
-    for relative_path in policy.get("allowed_paths", []):
-        container_path = "/app/" + relative_path.strip("/")
-        commands.append("mkdir -p " + shlex.quote(container_path))
-        commands.append("chown -R root:root " + shlex.quote(container_path))
-        commands.append("chmod " + shlex.quote(expected_mode) + " " + shlex.quote(container_path))
-    if commands:
-        print("\t".join([scenario["docker_service"], " && ".join(commands)]))
-PY
-      )
+    missing|parent-no-exec|owner-root|file-unreadable|file-unwritable)
       ;;
     *)
       echo "invalid AI_LOGFIXER_PERMISSION_DRIFT_VARIANT: $permission_drift_variant" >&2
       return 2
       ;;
   esac
+
+  local commands_file="$artifacts/permission-variant-commands.tsv"
+  python3 - "$lab_root/lab.json" "$lab_root" "$permission_drift_variant" > "$commands_file" <<'PY'
+from pathlib import Path, PurePosixPath
+import json
+import shlex
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+lab_root = Path(sys.argv[2]).resolve()
+variant = sys.argv[3]
+
+def permission_targets(policy):
+    targets = policy.get("permission_targets") or []
+    if targets:
+        return targets
+    expected_mode = policy.get("expected_mode", "0775")
+    return [
+        {"path": relative_path, "kind": "dir", "access": "write", "expected_mode": expected_mode}
+        for relative_path in policy.get("allowed_paths", [])
+    ]
+
+def path_for(target):
+    return "/app/" + target["path"].strip("/")
+
+def expected_mode(policy, target):
+    return target.get("expected_mode") or policy.get("expected_mode", "0775")
+
+def owner(policy, target):
+    return target.get("expected_owner") or policy.get("expected_owner") or "app"
+
+def group(policy, target):
+    return target.get("expected_group") or policy.get("expected_group") or owner(policy, target)
+
+def heal_command(policy, target):
+    container_path = path_for(target)
+    mode = expected_mode(policy, target)
+    if target.get("kind") == "file":
+        return "test -f {path} && chown {owner}:{group} {path} && chmod {mode} {path}".format(
+            path=shlex.quote(container_path),
+            owner=shlex.quote(owner(policy, target)),
+            group=shlex.quote(group(policy, target)),
+            mode=shlex.quote(mode),
+        )
+    return "mkdir -p {path} && chown -R {owner}:{group} {path} && chmod {mode} {path}".format(
+        path=shlex.quote(container_path),
+        owner=shlex.quote(owner(policy, target)),
+        group=shlex.quote(group(policy, target)),
+        mode=shlex.quote(mode),
+    )
+
+def variant_commands(policy, targets):
+    commands = []
+    if variant == "missing":
+        for target in targets:
+            if target.get("kind") == "dir":
+                commands.append("rm -rf " + shlex.quote(path_for(target)))
+        return commands
+    if variant == "parent-no-exec":
+        seen = set()
+        for target in targets:
+            target_path = PurePosixPath(target["path"].strip("/"))
+            parent = target_path.parent
+            if target.get("kind") == "dir" and str(parent) in ("", "."):
+                search_path = "/app/" + str(target_path)
+            else:
+                search_path = "/app/" + str(parent)
+            if search_path in seen:
+                continue
+            seen.add(search_path)
+            commands.append("chmod 0666 " + shlex.quote(search_path))
+        return commands
+    if variant == "owner-root":
+        for target in targets:
+            container_path = path_for(target)
+            mode = expected_mode(policy, target)
+            if target.get("kind") == "file":
+                commands.append("test -f " + shlex.quote(container_path))
+                commands.append("chown root:root " + shlex.quote(container_path))
+                commands.append("chmod " + shlex.quote(mode) + " " + shlex.quote(container_path))
+            else:
+                commands.append("mkdir -p " + shlex.quote(container_path))
+                commands.append("chown -R root:root " + shlex.quote(container_path))
+                commands.append("chmod " + shlex.quote(mode) + " " + shlex.quote(container_path))
+        return commands
+    if variant in ("file-unreadable", "file-unwritable"):
+        commands.extend(heal_command(policy, target) for target in targets)
+        for target in targets:
+            if target.get("kind") != "file":
+                continue
+            if variant == "file-unreadable" and target.get("access") == "read":
+                commands.append("chmod 0000 " + shlex.quote(path_for(target)))
+            if variant == "file-unwritable" and target.get("access") == "write":
+                commands.append("chmod 0444 " + shlex.quote(path_for(target)))
+        return commands
+    return commands
+
+for scenario in manifest["scenarios"]:
+    if scenario["operational_lane"] != "permission-drift":
+        continue
+    policy = json.loads((lab_root / scenario["policy_file"]).read_text())
+    commands = variant_commands(policy, permission_targets(policy))
+    if commands:
+        print("\t".join([scenario["docker_service"], " && ".join(commands)]))
+PY
+
+  while IFS=$'\t' read -r service command; do
+    [[ -z "$service" ]] && continue
+    "${compose[@]}" exec -T -u root "$service" sh -lc "$command" < /dev/null
+  done < "$commands_file"
 }
 
 apply_permission_drift_variant
@@ -342,10 +368,8 @@ PY
     "${compose[@]}" logs --no-color "$service" > "$artifacts/logs/$scenario_id.log"
   done
 
-  while IFS=$'\t' read -r scenario_id service command; do
-    "${compose[@]}" exec -T "$service" sh -lc "$command" < /dev/null \
-      > "$artifacts/inventory/$scenario_id.txt" 2>&1 || true
-  done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
+  local inventory_commands="$artifacts/inventory-commands.tsv"
+  python3 - "$lab_root/lab.json" "$lab_root" > "$inventory_commands" <<'PY'
 from pathlib import Path
 import json
 import shlex
@@ -353,13 +377,24 @@ import sys
 
 manifest = json.loads(Path(sys.argv[1]).read_text())
 lab_root = Path(sys.argv[2]).resolve()
+
+def permission_targets(policy):
+    targets = policy.get("permission_targets") or []
+    if targets:
+        return targets
+    expected_mode = policy.get("expected_mode", "0775")
+    return [
+        {"path": relative_path, "kind": "dir", "access": "write", "expected_mode": expected_mode}
+        for relative_path in policy.get("allowed_paths", [])
+    ]
+
 for scenario in manifest["scenarios"]:
     lane = scenario["operational_lane"]
     commands = ["id"]
     if lane == "permission-drift":
         policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-        for relative_path in policy.get("allowed_paths", []):
-            container_path = "/app/" + relative_path.strip("/")
+        for target in permission_targets(policy):
+            container_path = "/app/" + target["path"].strip("/")
             commands.append("printf '%s\\n' " + shlex.quote("--- " + container_path))
             commands.append("ls -ld " + shlex.quote(container_path) + " 2>/dev/null || true")
     elif lane == "restart-reload":
@@ -369,7 +404,12 @@ for scenario in manifest["scenarios"]:
     commands.append("ps 2>/dev/null || true")
     print("\t".join([scenario["id"], scenario["docker_service"], "; ".join(commands)]))
 PY
-  )
+
+  while IFS=$'\t' read -r scenario_id service command; do
+    [[ -z "$scenario_id" ]] && continue
+    "${compose[@]}" exec -T "$service" sh -lc "$command" < /dev/null \
+      > "$artifacts/inventory/$scenario_id.txt" 2>&1 || true
+  done < "$inventory_commands"
 
   python3 - "$lab_root/lab.json" "$lab_root" "$artifacts/logs" "$artifacts/live-traces" "$artifacts/candidate-inputs" "$artifacts/inventory" "$project" "$lab_root/docker-compose.yml" <<'PY'
 from pathlib import Path

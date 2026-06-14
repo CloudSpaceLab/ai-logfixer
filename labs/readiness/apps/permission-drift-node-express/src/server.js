@@ -7,6 +7,7 @@ const auditPath = path.join(process.cwd(), 'uploads', 'audit.log');
 
 app.get('/orders/readiness', (_req, res) => {
   try {
+    fs.readFileSync(path.join(process.cwd(), 'config', 'readiness.json'), 'utf8');
     fs.writeFileSync(auditPath, 'readiness audit\n');
   } catch (error) {
     res.status(500).json({ detail: `permission drift: ${error.message}` });

@@ -4,8 +4,13 @@ RUN addgroup -g 10001 app && adduser -D -u 10001 -G app app
 WORKDIR /app
 
 COPY public public
-RUN mkdir -p /app/storage/logs \
+RUN mkdir -p /app/config /app/storage/logs \
+  && printf 'FIXED\n' > /app/config/app.key \
+  && touch /app/storage/logs/audit.log \
+  && chown app:app /app/config/app.key \
+  && chmod 0644 /app/config/app.key \
   && chown -R root:root /app/storage \
+  && chmod 0664 /app/storage/logs/audit.log \
   && chmod 0555 /app/storage/logs
 
 USER app

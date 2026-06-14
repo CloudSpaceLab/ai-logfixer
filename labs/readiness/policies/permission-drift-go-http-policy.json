@@ -3,6 +3,26 @@
   "allowed_paths": [
     "data"
   ],
+  "permission_targets": [
+    {
+      "path": "data",
+      "kind": "dir",
+      "access": "write",
+      "expected_mode": "0775"
+    },
+    {
+      "path": "config/readiness.json",
+      "kind": "file",
+      "access": "read",
+      "expected_mode": "0644"
+    },
+    {
+      "path": "data/app.sqlite",
+      "kind": "file",
+      "access": "write",
+      "expected_mode": "0664"
+    }
+  ],
   "expected_owner": "app",
   "expected_group": "app",
   "expected_mode": "0775",

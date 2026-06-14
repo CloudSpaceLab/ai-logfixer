@@ -177,12 +177,23 @@ type packageHistory struct {
 }
 
 type permissionPolicy struct {
-	Lane          string             `json:"lane"`
-	AllowedPaths  []string           `json:"allowed_paths"`
-	ExpectedOwner string             `json:"expected_owner"`
-	ExpectedGroup string             `json:"expected_group"`
-	ExpectedMode  string             `json:"expected_mode"`
-	Verification  policyVerification `json:"verification"`
+	Lane              string             `json:"lane"`
+	AllowedPaths      []string           `json:"allowed_paths"`
+	PermissionTargets []permissionTarget `json:"permission_targets"`
+	ExpectedOwner     string             `json:"expected_owner"`
+	ExpectedGroup     string             `json:"expected_group"`
+	ExpectedMode      string             `json:"expected_mode"`
+	Verification      policyVerification `json:"verification"`
+	Targets           []permissionTarget `json:"-"`
+}
+
+type permissionTarget struct {
+	Path          string `json:"path"`
+	Kind          string `json:"kind"`
+	Access        string `json:"access"`
+	ExpectedOwner string `json:"expected_owner"`
+	ExpectedGroup string `json:"expected_group"`
+	ExpectedMode  string `json:"expected_mode"`
 }
 
 type restartPolicy struct {
@@ -300,26 +311,56 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 	if err != nil {
 		return Response{}, err
 	}
-	mode, err := parsePermissionMode(policy.ExpectedMode)
-	if err != nil {
-		return Response{}, err
-	}
-	for _, relativePath := range policy.AllowedPaths {
+	for _, target := range policy.Targets {
+		relativePath := target.Path
+		mode, err := parsePermissionMode(target.ExpectedMode)
+		if err != nil {
+			return Response{}, err
+		}
 		if _, err := joinInsideApp(input.AppDir, relativePath); err != nil {
 			return Response{}, fmt.Errorf("resolve allowlisted permission path: %w", err)
 		}
 		if hasDockerTarget(input) {
-			if err := dockerRepairPermissions(ctx, input, relativePath, policy); err != nil {
+			if err := dockerRepairPermissions(ctx, input, target, policy); err != nil {
 				return Response{}, err
 			}
 			continue
 		}
 		path, _ := joinInsideApp(input.AppDir, relativePath)
-		if err := os.MkdirAll(path, mode); err != nil {
-			return Response{}, fmt.Errorf("mkdir %s: %w", relativePath, err)
-		}
-		if err := os.Chmod(path, mode); err != nil {
-			return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
+		switch target.Kind {
+		case "dir":
+			if err := os.MkdirAll(path, mode); err != nil {
+				return Response{}, fmt.Errorf("mkdir %s: %w", relativePath, err)
+			}
+			if err := os.Chmod(path, mode); err != nil {
+				return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
+			}
+		case "file":
+			if err := repairFileParentSearchPermission(input.AppDir, target, policy); err != nil {
+				return Response{}, err
+			}
+			info, err := os.Stat(path)
+			if os.IsNotExist(err) && target.Access == "write" {
+				file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+				if createErr != nil {
+					return Response{}, fmt.Errorf("create writable file target %s: %w", relativePath, createErr)
+				}
+				if closeErr := file.Close(); closeErr != nil {
+					return Response{}, fmt.Errorf("close writable file target %s: %w", relativePath, closeErr)
+				}
+				info, err = os.Stat(path)
+			}
+			if err != nil {
+				return Response{}, fmt.Errorf("stat %s: %w", relativePath, err)
+			}
+			if info.IsDir() {
+				return Response{}, fmt.Errorf("permission target %s is a directory, expected file", relativePath)
+			}
+			if err := os.Chmod(path, mode); err != nil {
+				return Response{}, fmt.Errorf("chmod %s: %w", relativePath, err)
+			}
+		default:
+			return Response{}, fmt.Errorf("permission target %s has unsupported kind %q", relativePath, target.Kind)
 		}
 	}
 	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
@@ -426,20 +467,82 @@ func loadPermissionPolicy(path string) (permissionPolicy, error) {
 	if normalizeLane(policy.Lane) != "permission-drift" {
 		return permissionPolicy{}, fmt.Errorf("policy lane %q does not match permission-drift", policy.Lane)
 	}
-	if len(policy.AllowedPaths) == 0 {
-		return permissionPolicy{}, errors.New("permission-drift policy allowed_paths is required")
-	}
-	if strings.TrimSpace(policy.ExpectedMode) == "" {
-		return permissionPolicy{}, errors.New("permission-drift policy expected_mode is required")
-	}
-	mode, err := parsePermissionMode(policy.ExpectedMode)
+	targets, err := normalizePermissionTargets(policy)
 	if err != nil {
 		return permissionPolicy{}, err
 	}
-	if mode&0o002 != 0 {
-		return permissionPolicy{}, fmt.Errorf("permission-drift policy expected_mode %q is unsafe; world-writable modes such as 0777 are forbidden", policy.ExpectedMode)
-	}
+	policy.Targets = targets
 	return policy, nil
+}
+
+func normalizePermissionTargets(policy permissionPolicy) ([]permissionTarget, error) {
+	var targets []permissionTarget
+	if len(policy.PermissionTargets) > 0 {
+		for _, target := range policy.PermissionTargets {
+			target.Path = strings.TrimSpace(target.Path)
+			target.Kind = strings.TrimSpace(target.Kind)
+			if target.Kind == "" {
+				target.Kind = "dir"
+			}
+			target.Access = strings.TrimSpace(target.Access)
+			target.ExpectedMode = firstNonEmpty(target.ExpectedMode, policy.ExpectedMode)
+			target.ExpectedOwner = firstNonEmpty(target.ExpectedOwner, policy.ExpectedOwner)
+			target.ExpectedGroup = firstNonEmpty(target.ExpectedGroup, policy.ExpectedGroup)
+			if err := validatePermissionTarget(target); err != nil {
+				return nil, err
+			}
+			targets = append(targets, target)
+		}
+		return targets, nil
+	}
+
+	if len(policy.AllowedPaths) == 0 {
+		return nil, errors.New("permission-drift policy allowed_paths or permission_targets is required")
+	}
+	if strings.TrimSpace(policy.ExpectedMode) == "" {
+		return nil, errors.New("permission-drift policy expected_mode is required")
+	}
+	for _, allowedPath := range policy.AllowedPaths {
+		target := permissionTarget{
+			Path:          strings.TrimSpace(allowedPath),
+			Kind:          "dir",
+			Access:        "write",
+			ExpectedOwner: policy.ExpectedOwner,
+			ExpectedGroup: policy.ExpectedGroup,
+			ExpectedMode:  policy.ExpectedMode,
+		}
+		if err := validatePermissionTarget(target); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, nil
+}
+
+func validatePermissionTarget(target permissionTarget) error {
+	if target.Path == "" {
+		return errors.New("permission-drift policy target path is required")
+	}
+	if target.Kind != "dir" && target.Kind != "file" {
+		return fmt.Errorf("permission-drift policy target %q kind %q is unsupported", target.Path, target.Kind)
+	}
+	if target.Kind == "file" && target.Access != "read" && target.Access != "write" {
+		return fmt.Errorf("permission-drift policy file target %q access %q is unsupported", target.Path, target.Access)
+	}
+	if target.Kind == "dir" && target.Access == "" {
+		target.Access = "write"
+	}
+	if strings.TrimSpace(target.ExpectedMode) == "" {
+		return fmt.Errorf("permission-drift policy target %q expected_mode is required", target.Path)
+	}
+	mode, err := parsePermissionMode(target.ExpectedMode)
+	if err != nil {
+		return err
+	}
+	if mode&0o002 != 0 {
+		return fmt.Errorf("permission-drift policy target %q expected_mode %q is unsafe; world-writable modes such as 0777 are forbidden", target.Path, target.ExpectedMode)
+	}
+	return nil
 }
 
 func parsePermissionMode(value string) (os.FileMode, error) {
@@ -588,11 +691,55 @@ func hasDockerTarget(input CandidateInput) bool {
 		strings.TrimSpace(input.DockerService) != ""
 }
 
-func dockerRepairPermissions(ctx context.Context, input CandidateInput, relativePath string, policy permissionPolicy) error {
-	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(relativePath))
-	owner := firstNonEmpty(policy.ExpectedOwner, "app")
-	group := firstNonEmpty(policy.ExpectedGroup, owner)
-	script := fmt.Sprintf("mkdir -p %s && chown -R %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(policy.ExpectedMode), shellQuote(containerPath))
+func repairFileParentSearchPermission(appDir string, target permissionTarget, policy permissionPolicy) error {
+	parent, ok := fileParentSearchPath(target, policy)
+	if !ok {
+		return nil
+	}
+	parentPath, err := joinInsideApp(appDir, parent)
+	if err != nil {
+		return fmt.Errorf("resolve permission parent path: %w", err)
+	}
+	if err := os.Chmod(parentPath, 0o711); err != nil {
+		return fmt.Errorf("chmod parent %s: %w", parent, err)
+	}
+	return nil
+}
+
+func fileParentSearchPath(target permissionTarget, policy permissionPolicy) (string, bool) {
+	if target.Kind != "file" {
+		return "", false
+	}
+	parent := filepath.Clean(filepath.Dir(filepath.Clean(target.Path)))
+	if parent == "." || parent == string(filepath.Separator) {
+		return "", false
+	}
+	for _, declared := range policy.Targets {
+		if declared.Kind == "dir" && filepath.Clean(declared.Path) == parent {
+			return "", false
+		}
+	}
+	return parent, true
+}
+
+func dockerRepairPermissions(ctx context.Context, input CandidateInput, target permissionTarget, policy permissionPolicy) error {
+	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(target.Path))
+	owner := firstNonEmpty(target.ExpectedOwner, policy.ExpectedOwner, "app")
+	group := firstNonEmpty(target.ExpectedGroup, policy.ExpectedGroup, owner)
+	mode := target.ExpectedMode
+	var script string
+	if target.Kind == "file" {
+		if parent, ok := fileParentSearchPath(target, policy); ok {
+			containerParent := "/app/" + filepath.ToSlash(parent)
+			script = fmt.Sprintf("test -d %s && chmod 0711 %s && ", shellQuote(containerParent), shellQuote(containerParent))
+		}
+		if target.Access == "write" {
+			script += fmt.Sprintf("if [ ! -e %s ]; then : > %s; fi && ", shellQuote(containerPath), shellQuote(containerPath))
+		}
+		script += fmt.Sprintf("test -f %s && chown %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
+	} else {
+		script = fmt.Sprintf("mkdir -p %s && chown -R %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
+	}
 	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "exec", "-T", "-u", "root", input.DockerService, "sh", "-lc", script}
 	command := exec.CommandContext(ctx, "docker", args...)
 	output, err := command.CombinedOutput()

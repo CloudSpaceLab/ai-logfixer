@@ -221,6 +221,8 @@ func TestDockerLabScriptSupportsPermissionDriftVariants(t *testing.T) {
 		"chmod 0666",
 		"owner-root",
 		"chown -R root:root",
+		"file-unreadable",
+		"file-unwritable",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
@@ -238,9 +240,16 @@ func TestDockerLabScriptGeneratesMissingVariantForEachPermissionScenario(t *test
 	}
 	script := string(raw)
 
-	expectedScope := "        commands.append(\"rm -rf \" + shlex.quote(container_path))\n    if commands:\n        print(\"\\t\".join([scenario[\"docker_service\"], \" && \".join(commands)]))"
-	if !strings.Contains(script, expectedScope) {
-		t.Fatalf("missing permission variant must emit rm commands inside each scenario loop")
+	requiredSnippets := []string{
+		"if variant == \"missing\":",
+		"if target.get(\"kind\") == \"dir\":",
+		"commands.append(\"rm -rf \" + shlex.quote(path_for(target)))",
+		"print(\"\\t\".join([scenario[\"docker_service\"], \" && \".join(commands)]))",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("missing permission variant must emit rm commands inside each scenario loop; missing %q", snippet)
+		}
 	}
 }
 
@@ -284,14 +293,89 @@ func TestDockerLabScriptGeneratesParentNoExecForTopLevelPermissionPaths(t *testi
 	script := string(raw)
 
 	requiredSnippets := []string{
-		"search_paths = []",
-		"if str(parent) in (\"\", \".\"):",
-		"container_search_path = \"/app/\" + str(path)",
-		"chmod 0666 \" + shlex.quote(search_path)",
+		"if variant == \"parent-no-exec\":",
+		"seen = set()",
+		"if target.get(\"kind\") == \"dir\" and str(parent) in (\"\", \".\"):",
+		"search_path = \"/app/\" + str(target_path)",
+		"commands.append(\"chmod 0666 \" + shlex.quote(search_path))",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("parent-no-exec variant must remove execute/search permission from top-level runtime directories; missing %q", snippet)
+		}
+	}
+}
+
+func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
+	root := repoRoot(t)
+	policies, err := filepath.Glob(filepath.Join(root, "labs", "readiness", "policies", "permission-drift-*-policy.json"))
+	if err != nil {
+		t.Fatalf("glob permission policies: %v", err)
+	}
+	if len(policies) == 0 {
+		t.Fatal("expected permission-drift policies")
+	}
+
+	for _, policyPath := range policies {
+		raw, err := os.ReadFile(policyPath)
+		if err != nil {
+			t.Fatalf("read policy %s: %v", policyPath, err)
+		}
+		var policy struct {
+			PermissionTargets []struct {
+				Path         string `json:"path"`
+				Kind         string `json:"kind"`
+				Access       string `json:"access"`
+				ExpectedMode string `json:"expected_mode"`
+			} `json:"permission_targets"`
+		}
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			t.Fatalf("decode policy %s: %v", policyPath, err)
+		}
+		var hasReadableFile, hasWritableFile bool
+		for _, target := range policy.PermissionTargets {
+			if target.Kind != "file" {
+				continue
+			}
+			if target.Path == "" || target.ExpectedMode == "" {
+				t.Fatalf("%s file target must declare path and expected_mode: %+v", filepath.Base(policyPath), target)
+			}
+			switch target.Access {
+			case "read":
+				hasReadableFile = true
+			case "write":
+				hasWritableFile = true
+			default:
+				t.Fatalf("%s file target must declare read or write access: %+v", filepath.Base(policyPath), target)
+			}
+		}
+		if !hasReadableFile || !hasWritableFile {
+			t.Fatalf("%s must declare both readable and writable file permission targets", filepath.Base(policyPath))
+		}
+	}
+}
+
+func TestDockerLabScriptGeneratesFileLevelPermissionVariants(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"permission_targets",
+		"file-unreadable|file-unwritable)",
+		"target.get(\"kind\") == \"file\"",
+		"target.get(\"access\") == \"read\"",
+		"commands.append(\"chmod 0000 \" + shlex.quote(path_for(target)))",
+		"target.get(\"access\") == \"write\"",
+		"commands.append(\"chmod 0444 \" + shlex.quote(path_for(target)))",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("file-level permission variants missing snippet %q", snippet)
 		}
 	}
 }
@@ -306,10 +390,10 @@ func TestDockerLabScriptGeneratesOwnerRootWithExpectedModeForEachPermissionScena
 	script := string(raw)
 
 	requiredSnippets := []string{
-		"owner-root)",
-		"expected_mode = policy.get(\"expected_mode\", \"0775\")",
+		"if variant == \"owner-root\":",
+		"mode = expected_mode(policy, target)",
 		"chown -R root:root \" + shlex.quote(container_path)",
-		"chmod \" + shlex.quote(expected_mode) + \" \" + shlex.quote(container_path)",
+		"chmod \" + shlex.quote(mode) + \" \" + shlex.quote(container_path)",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
@@ -398,6 +482,35 @@ func TestPermissionEnduranceRunnerAcceptsOwnerRootVariant(t *testing.T) {
 	}
 	if !strings.Contains(string(output), `"cycles": 1`) {
 		t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))
+	}
+}
+
+func TestPermissionEnduranceRunnerAcceptsFileLevelVariants(t *testing.T) {
+	root := repoRoot(t)
+	runnerPath := filepath.Join(root, "labs", "readiness", "bin", "run-permission-endurance.py")
+	for _, variant := range []string{"file-unreadable", "file-unwritable"} {
+		t.Run(variant, func(t *testing.T) {
+			artifacts := filepath.Join(t.TempDir(), "permission-endurance")
+			command := exec.Command(
+				"python3",
+				runnerPath,
+				"--candidate-command", "true",
+				"--cycles", "1",
+				"--variants", variant,
+				"--artifacts", artifacts,
+				"--lab-script", "true",
+			)
+			output, err := command.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected stubbed lab run to fail readiness, got success:\n%s", string(output))
+			}
+			if strings.Contains(string(output), "unsupported permission-drift variants") {
+				t.Fatalf("%s must be an accepted permission variant:\n%s", variant, string(output))
+			}
+			if !strings.Contains(string(output), `"cycles": 1`) {
+				t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))
+			}
+		})
 	}
 }
 

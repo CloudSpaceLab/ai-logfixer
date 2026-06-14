@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 public class App {
   public static void main(String[] args) throws Exception {
@@ -17,7 +18,8 @@ public class App {
     int status = 200;
     String body = "{\"status\":\"FIXED\",\"lane\":\"permission-drift\"}";
     try {
-      Files.writeString(Path.of("logs", "audit.log"), "readiness audit\n");
+      Files.readString(Path.of("config", "cert.pem"));
+      Files.writeString(Path.of("logs", "audit.log"), "readiness audit\n", StandardOpenOption.APPEND);
     } catch (IOException error) {
       status = 500;
       body = "{\"detail\":\"permission drift: " + escape(error.getMessage()) + "\"}";

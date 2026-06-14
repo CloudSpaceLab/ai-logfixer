@@ -15,7 +15,19 @@ func main() {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
 			return
 		}
-		if err := os.WriteFile("data/audit.log", []byte("readiness audit\n"), 0o644); err != nil {
+		if _, err := os.ReadFile("config/readiness.json"); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"detail": fmt.Sprintf("permission drift: %v", err)})
+			return
+		}
+		file, err := os.OpenFile("data/app.sqlite", os.O_WRONLY|os.O_APPEND, 0o664)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"detail": fmt.Sprintf("permission drift: %v", err)})
+			return
+		}
+		defer file.Close()
+		if _, err := file.WriteString("readiness audit\n"); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"detail": fmt.Sprintf("permission drift: %v", err)})
 			return
