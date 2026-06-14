@@ -217,10 +217,79 @@ func TestDockerLabScriptSupportsPermissionDriftVariants(t *testing.T) {
 		"apply_permission_drift_variant",
 		"missing",
 		"rm -rf",
+		"parent-no-exec",
+		"chmod 0666",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("script missing permission drift variant snippet %q", snippet)
+		}
+	}
+}
+
+func TestDockerLabScriptGeneratesMissingVariantForEachPermissionScenario(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	expectedScope := "        commands.append(\"rm -rf \" + shlex.quote(container_path))\n    if commands:\n        print(\"\\t\".join([scenario[\"docker_service\"], \" && \".join(commands)]))"
+	if !strings.Contains(script, expectedScope) {
+		t.Fatalf("missing permission variant must emit rm commands inside each scenario loop")
+	}
+}
+
+func TestPermissionDriftPoliciesAllowlistNestedParents(t *testing.T) {
+	root := repoRoot(t)
+	policyPath := filepath.Join(root, "labs", "readiness", "policies", "permission-drift-php-laravel-style-policy.json")
+	raw, err := os.ReadFile(policyPath)
+	if err != nil {
+		t.Fatalf("read php permission policy: %v", err)
+	}
+	var policy struct {
+		AllowedPaths []string `json:"allowed_paths"`
+	}
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		t.Fatalf("decode php permission policy: %v", err)
+	}
+
+	required := map[string]bool{
+		"storage":      false,
+		"storage/logs": false,
+	}
+	for _, path := range policy.AllowedPaths {
+		if _, ok := required[path]; ok {
+			required[path] = true
+		}
+	}
+	for path, present := range required {
+		if !present {
+			t.Fatalf("php permission policy must allowlist nested parent path %q for parent execute/search drift", path)
+		}
+	}
+}
+
+func TestDockerLabScriptGeneratesParentNoExecForTopLevelPermissionPaths(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"search_paths = []",
+		"if str(parent) in (\"\", \".\"):",
+		"container_search_path = \"/app/\" + str(path)",
+		"chmod 0666 \" + shlex.quote(search_path)",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("parent-no-exec variant must remove execute/search permission from top-level runtime directories; missing %q", snippet)
 		}
 	}
 }
@@ -255,6 +324,31 @@ func TestPermissionEnduranceRunnerExposesLongRunningBlackBoxLoop(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "requires --cycles or --duration-seconds") {
 		t.Fatalf("permission endurance runner missing bounded-run error:\n%s", string(output))
+	}
+}
+
+func TestPermissionEnduranceRunnerAcceptsParentNoExecVariant(t *testing.T) {
+	root := repoRoot(t)
+	runnerPath := filepath.Join(root, "labs", "readiness", "bin", "run-permission-endurance.py")
+	artifacts := filepath.Join(t.TempDir(), "permission-endurance")
+	command := exec.Command(
+		"python3",
+		runnerPath,
+		"--candidate-command", "true",
+		"--cycles", "1",
+		"--variants", "parent-no-exec",
+		"--artifacts", artifacts,
+		"--lab-script", "true",
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected stubbed lab run to fail readiness, got success:\n%s", string(output))
+	}
+	if strings.Contains(string(output), "unsupported permission-drift variants") {
+		t.Fatalf("parent-no-exec must be an accepted permission variant:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), `"cycles": 1`) {
+		t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))
 	}
 }
 

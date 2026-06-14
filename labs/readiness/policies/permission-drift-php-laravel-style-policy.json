@@ -1,6 +1,7 @@
 {
   "lane": "permission-drift",
   "allowed_paths": [
+    "storage",
     "storage/logs"
   ],
   "expected_owner": "app",
