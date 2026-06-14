@@ -192,6 +192,32 @@ func TestResolvePermissionDriftRepairsAllowlistedPath(t *testing.T) {
 	if info.Mode().Perm() != 0o775 {
 		t.Fatalf("expected permission repair to set 0775, got %04o", info.Mode().Perm())
 	}
+	if response.RollbackPath == "" {
+		t.Fatalf("expected permission rollback path, got %+v", response)
+	}
+	if response.RemediationPlan == nil || response.RemediationPlan.RollbackPlan.SnapshotRefs[0] != response.RollbackPath {
+		t.Fatalf("expected remediation plan to reference rollback path, got %+v", response.RemediationPlan)
+	}
+	if response.Attempt == nil || response.Attempt.Status != "succeeded" {
+		t.Fatalf("expected succeeded remediation attempt, got %+v", response.Attempt)
+	}
+	if response.Receipt == nil || !strings.Contains(response.Receipt.BeforeState, "storage/logs") || !strings.Contains(response.Receipt.AfterState, "0775") {
+		t.Fatalf("expected permission receipt with before/after path state, got %+v", response.Receipt)
+	}
+	if len(response.PermissionChanges) != 1 {
+		t.Fatalf("expected one permission change, got %+v", response.PermissionChanges)
+	}
+	change := response.PermissionChanges[0]
+	if change.Path != "storage/logs" || change.Action != "repair_dir_permissions" || change.BeforeMode != "0555" || change.AfterMode != "0775" {
+		t.Fatalf("expected exact permission repair receipt, got %+v", change)
+	}
+	rawRollback, err := os.ReadFile(response.RollbackPath)
+	if err != nil {
+		t.Fatalf("read permission rollback manifest: %v", err)
+	}
+	if !strings.Contains(string(rawRollback), "storage/logs") || !strings.Contains(string(rawRollback), "0555") {
+		t.Fatalf("expected rollback manifest to preserve original mode, got %s", rawRollback)
+	}
 }
 
 func TestResolvePermissionDriftCreatesMissingAllowlistedPath(t *testing.T) {
@@ -407,6 +433,19 @@ func TestResolvePermissionDriftRepairsFileParentSearchPermission(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o002 != 0 {
 		t.Fatalf("parent search repair must not leave world-writable permissions, got %04o", info.Mode().Perm())
+	}
+	var parentChange *readinessresolve.PermissionChange
+	for i := range response.PermissionChanges {
+		if response.PermissionChanges[i].Path == "config" {
+			parentChange = &response.PermissionChanges[i]
+			break
+		}
+	}
+	if parentChange == nil {
+		t.Fatalf("expected parent search permission change in receipt, got %+v", response.PermissionChanges)
+	}
+	if parentChange.Action != "repair_parent_search_permission" || parentChange.BeforeMode != "0666" || parentChange.AfterMode != "0711" {
+		t.Fatalf("expected exact parent search repair receipt, got %+v", parentChange)
 	}
 }
 
