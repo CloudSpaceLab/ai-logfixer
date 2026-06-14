@@ -1,7 +1,7 @@
 {
   "lane": "permission-drift",
   "allowed_paths": [
-    "storage/logs"
+    "storage"
   ],
   "expected_owner": "app",
   "expected_group": "app",
@@ -12,7 +12,7 @@
   ],
   "verification": {
     "method": "http",
-    "url": "http://127.0.0.1:18083/orders/readiness",
+    "url": "http://127.0.0.1:18088/orders/readiness",
     "expected_status": 200,
     "body_contains": "FIXED"
   }

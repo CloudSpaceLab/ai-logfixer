@@ -30,10 +30,35 @@ services:
     ports:
       - "18082:8080"
 
-  permission-drift-api:
-    build: ./apps/permission-drift-api
+  permission-drift-go-http:
+    build: ./apps/permission-drift-go-http
     ports:
       - "18083:8080"
+
+  permission-drift-node-express:
+    build: ./apps/permission-drift-node-express
+    ports:
+      - "18085:8080"
+
+  permission-drift-python-flask:
+    build: ./apps/permission-drift-python-flask
+    ports:
+      - "18086:8080"
+
+  permission-drift-php-laravel-style:
+    build: ./apps/permission-drift-php-laravel-style
+    ports:
+      - "18087:8080"
+
+  permission-drift-ruby-lightweight:
+    build: ./apps/permission-drift-ruby-lightweight
+    ports:
+      - "18088:8080"
+
+  permission-drift-java-lightweight:
+    build: ./apps/permission-drift-java-lightweight
+    ports:
+      - "18089:8080"
 
   restart-reload-api:
     build: ./apps/restart-reload-api

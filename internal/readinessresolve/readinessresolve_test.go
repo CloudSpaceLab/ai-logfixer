@@ -169,9 +169,9 @@ func TestResolvePermissionDriftRepairsAllowlistedPath(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
-		ScenarioID:          "permission-drift-api",
+		ScenarioID:          "permission-drift-local",
 		OperationalLane:     "permission-drift",
-		ServiceName:         "permission-drift-api",
+		ServiceName:         "permission-drift-local",
 		AppDir:              appDir,
 		PolicyFile:          policyPath,
 		TraceFile:           tracePath,
@@ -191,6 +191,111 @@ func TestResolvePermissionDriftRepairsAllowlistedPath(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o775 {
 		t.Fatalf("expected permission repair to set 0775, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolvePermissionDriftCreatesMissingAllowlistedPath(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	logDir := filepath.Join(appDir, "storage", "logs")
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":           "permission-drift",
+		"allowed_paths":  []string{"storage/logs"},
+		"expected_mode":  "0775",
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: missing log directory\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := os.WriteFile(filepath.Join(logDir, "audit.log"), []byte("ok\n"), 0o644); err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-missing-local",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-missing-local",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve missing permission path: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved missing permission response, got %+v", response)
+	}
+	info, err := os.Stat(logDir)
+	if err != nil {
+		t.Fatalf("missing allowlisted path should be created: %v", err)
+	}
+	if info.Mode().Perm() != 0o775 {
+		t.Fatalf("expected created path mode 0775, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolvePermissionDriftRejectsWorldWritablePolicy(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	logDir := filepath.Join(appDir, "storage", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":          "permission-drift",
+		"allowed_paths": []string{"storage/logs"},
+		"expected_mode": "0777",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-unsafe",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-unsafe",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err == nil {
+		t.Fatal("expected unsafe permission policy to fail")
+	}
+	if !strings.Contains(err.Error(), "0777") {
+		t.Fatalf("expected unsafe mode in error, got %v", err)
 	}
 }
 
