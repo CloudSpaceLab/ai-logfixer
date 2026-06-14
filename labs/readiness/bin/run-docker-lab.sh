@@ -200,6 +200,33 @@ for scenario in manifest["scenarios"]:
 PY
       )
       ;;
+    owner-root)
+      while IFS=$'\t' read -r service command; do
+        "${compose[@]}" exec -T -u root "$service" sh -lc "$command" < /dev/null
+      done < <(python3 - "$lab_root/lab.json" "$lab_root" <<'PY'
+from pathlib import Path
+import json
+import shlex
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text())
+lab_root = Path(sys.argv[2]).resolve()
+for scenario in manifest["scenarios"]:
+    if scenario["operational_lane"] != "permission-drift":
+        continue
+    policy = json.loads((lab_root / scenario["policy_file"]).read_text())
+    expected_mode = policy.get("expected_mode", "0775")
+    commands = []
+    for relative_path in policy.get("allowed_paths", []):
+        container_path = "/app/" + relative_path.strip("/")
+        commands.append("mkdir -p " + shlex.quote(container_path))
+        commands.append("chown -R root:root " + shlex.quote(container_path))
+        commands.append("chmod " + shlex.quote(expected_mode) + " " + shlex.quote(container_path))
+    if commands:
+        print("\t".join([scenario["docker_service"], " && ".join(commands)]))
+PY
+      )
+      ;;
     *)
       echo "invalid AI_LOGFIXER_PERMISSION_DRIFT_VARIANT: $permission_drift_variant" >&2
       return 2
