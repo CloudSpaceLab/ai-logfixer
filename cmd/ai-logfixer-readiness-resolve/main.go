@@ -43,7 +43,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	response, err := readinessresolve.Resolve(context.Background(), input)
 	if err != nil {
-		_ = encodeResponse(stdout, readinessresolve.FailedResponse(input, err.Error()))
+		if response.SchemaVersion == "" {
+			response = readinessresolve.FailedResponse(input, err.Error())
+		}
+		if response.Message == "" {
+			response.Message = err.Error()
+		}
+		_ = encodeResponse(stdout, response)
 		fmt.Fprintf(stderr, "resolve readiness candidate: %v\n", err)
 		return 1
 	}

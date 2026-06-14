@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CloudSpaceLab/ai-logfixer/internal/readinessresolve"
 )
@@ -275,6 +276,80 @@ func TestResolvePermissionDriftCreatesMissingAllowlistedPath(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o775 {
 		t.Fatalf("expected created path mode 0775, got %04o", info.Mode().Perm())
+	}
+}
+
+func TestResolvePermissionDriftRollsBackLocalRepairWhenVerificationFails(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	logDir := filepath.Join(appDir, "storage", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	if err := os.Chmod(logDir, 0o555); err != nil {
+		t.Fatalf("chmod log dir: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":           "permission-drift",
+		"allowed_paths":  []string{"storage/logs"},
+		"expected_mode":  "0775",
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: write storage/logs/audit.log: permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Error(writer, "still broken", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	t.Cleanup(cancel)
+	response, err := readinessresolve.Resolve(ctx, readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-rollback-local",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-rollback-local",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err == nil {
+		t.Fatal("expected failed verification error")
+	}
+	if !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("expected rollback result in error, got %v", err)
+	}
+	info, err := os.Stat(logDir)
+	if err != nil {
+		t.Fatalf("stat log dir: %v", err)
+	}
+	if info.Mode().Perm() != 0o555 {
+		t.Fatalf("failed verification must roll back original mode 0555, got %04o", info.Mode().Perm())
+	}
+	if response.Status != readinessresolve.StatusFailed || !response.Supported {
+		t.Fatalf("expected structured failed permission response, got %+v", response)
+	}
+	if response.RollbackPath == "" || len(response.PermissionChanges) != 1 {
+		t.Fatalf("expected rollback evidence and permission changes, got %+v", response)
+	}
+	if response.Attempt == nil || string(response.Attempt.Status) != "rolled_back" {
+		t.Fatalf("expected rolled back remediation attempt, got %+v", response.Attempt)
+	}
+	if response.Receipt == nil || response.Receipt.Outcome != "rolled_back" || !strings.Contains(response.Receipt.AfterState, "0555") {
+		t.Fatalf("expected rolled back receipt with restored state, got %+v", response.Receipt)
 	}
 }
 
