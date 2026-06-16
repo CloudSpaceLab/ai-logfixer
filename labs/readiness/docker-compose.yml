@@ -75,6 +75,11 @@ services:
     ports:
       - "18089:8080"
 
+  permission-drift-go-static-traversal:
+    build: ./apps/permission-drift-go-static-traversal
+    ports:
+      - "18093:8080"
+
   restart-reload-api:
     build: ./apps/restart-reload-api
     ports:

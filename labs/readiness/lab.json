@@ -186,6 +186,22 @@
       "safe_action": "repair allowlisted path owner and mode only"
     },
     {
+      "id": "permission-drift-go-static-traversal",
+      "operational_lane": "permission-drift",
+      "runtime": "go",
+      "app_carrier": "net-http",
+      "service_name": "permission-drift-go-static-traversal",
+      "docker_service": "permission-drift-go-static-traversal",
+      "app_dir": "apps/permission-drift-go-static-traversal",
+      "policy_file": "policies/permission-drift-go-static-traversal-policy.json",
+      "live_probe_url": "http://127.0.0.1:18093/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "skip_permission_variants": true,
+      "safe_action": "repair read-only static directory search permissions without adding runtime write or following traversal-looking log paths"
+    },
+    {
       "id": "restart-reload-api",
       "operational_lane": "restart-reload",
       "runtime": "go",

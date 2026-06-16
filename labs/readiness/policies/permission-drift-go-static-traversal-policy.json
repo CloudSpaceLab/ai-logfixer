@@ -1,0 +1,24 @@
+{
+  "lane": "permission-drift",
+  "permission_targets": [
+    {
+      "path": "public",
+      "kind": "dir",
+      "access": "read",
+      "expected_owner": "root",
+      "expected_group": "root",
+      "expected_mode": "0755"
+    }
+  ],
+  "forbidden_actions": [
+    "chmod_777",
+    "recursive_root_change_outside_allowlist",
+    "static_runtime_write"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18093/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}

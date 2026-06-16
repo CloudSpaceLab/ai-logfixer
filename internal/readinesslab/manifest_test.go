@@ -33,6 +33,7 @@ type scenario struct {
 	FixedBodyContains       string `json:"fixed_body_contains"`
 	ExpectedCandidateStatus string `json:"expected_candidate_status"`
 	UnsafeFixture           bool   `json:"unsafe_fixture"`
+	SkipPermissionVariants  bool   `json:"skip_permission_variants"`
 }
 
 func TestOperationalReadinessManifestCoversRequiredLanes(t *testing.T) {
@@ -186,6 +187,68 @@ func TestPermissionDriftManifestIncludesRestartReloadFixture(t *testing.T) {
 	t.Fatal("permission-drift restart/reload fixture missing from readiness manifest")
 }
 
+func TestPermissionDriftManifestIncludesStaticTraversalNegativeFixture(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var doc manifest
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	for _, item := range doc.Scenarios {
+		if item.ID != "permission-drift-go-static-traversal" {
+			continue
+		}
+		if item.OperationalLane != "permission-drift" || item.Runtime != "go" {
+			t.Fatalf("%s should cover Go permission-drift static path behavior, got lane=%q runtime=%q", item.ID, item.OperationalLane, item.Runtime)
+		}
+		if item.ExpectedFixedStatus != 200 || item.UnsafeFixture {
+			t.Fatalf("%s should be a recoverable static read negative fixture, got fixed=%d unsafe=%t", item.ID, item.ExpectedFixedStatus, item.UnsafeFixture)
+		}
+		if !item.SkipPermissionVariants {
+			t.Fatalf("%s must skip generic permission variants so static read targets are not pre-healed", item.ID)
+		}
+		if !strings.Contains(item.ID, "static") {
+			t.Fatalf("%s should make static-directory coverage clear", item.ID)
+		}
+		policyRaw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", item.PolicyFile))
+		if err != nil {
+			t.Fatalf("read static traversal permission policy: %v", err)
+		}
+		var policy struct {
+			PermissionTargets []struct {
+				Path          string `json:"path"`
+				Kind          string `json:"kind"`
+				Access        string `json:"access"`
+				ExpectedOwner string `json:"expected_owner"`
+				ExpectedGroup string `json:"expected_group"`
+				ExpectedMode  string `json:"expected_mode"`
+			} `json:"permission_targets"`
+		}
+		if err := json.Unmarshal(policyRaw, &policy); err != nil {
+			t.Fatalf("decode static traversal permission policy: %v", err)
+		}
+		for _, target := range policy.PermissionTargets {
+			if target.Path != "public" {
+				continue
+			}
+			if target.Kind != "dir" || target.Access != "read" {
+				t.Fatalf("public target should be a read-only static directory, got %+v", target)
+			}
+			if target.ExpectedOwner != "root" || target.ExpectedGroup != "root" || target.ExpectedMode != "0755" {
+				t.Fatalf("static directory repair must keep root-owned 0755, got %+v", target)
+			}
+			return
+		}
+		t.Fatalf("%s policy missing public static directory target", item.ID)
+	}
+	t.Fatal("permission-drift static traversal negative fixture missing from readiness manifest")
+}
+
 func TestPermissionDriftManifestCoversIssue45Platforms(t *testing.T) {
 	root := repoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
@@ -303,6 +366,26 @@ func TestDockerLabScriptSkipsUnsafeFixturesWhenApplyingPermissionVariants(t *tes
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("permission variant injector must not pre-heal unsafe fixtures; missing %q", snippet)
+		}
+	}
+}
+
+func TestDockerLabScriptSkipsStaticNegativeFixturesWhenApplyingPermissionVariants(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"scenario.get(\"skip_permission_variants\")",
+		"continue",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("permission variant injector must not pre-heal static negative fixtures; missing %q", snippet)
 		}
 	}
 }
@@ -436,6 +519,21 @@ func TestDockerLabScriptGeneratesParentNoExecForTopLevelPermissionPaths(t *testi
 
 func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 	root := repoRoot(t)
+	manifestRaw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var doc manifest
+	if err := json.Unmarshal(manifestRaw, &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	skipsPermissionVariants := map[string]bool{}
+	for _, item := range doc.Scenarios {
+		if item.OperationalLane == "permission-drift" && item.SkipPermissionVariants {
+			skipsPermissionVariants[filepath.Base(item.PolicyFile)] = true
+		}
+	}
+
 	policies, err := filepath.Glob(filepath.Join(root, "labs", "readiness", "policies", "permission-drift-*-policy.json"))
 	if err != nil {
 		t.Fatalf("glob permission policies: %v", err)
@@ -453,10 +551,12 @@ func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 			Framework         string   `json:"framework"`
 			AllowedPaths      []string `json:"allowed_paths"`
 			PermissionTargets []struct {
-				Path         string `json:"path"`
-				Kind         string `json:"kind"`
-				Access       string `json:"access"`
-				ExpectedMode string `json:"expected_mode"`
+				Path          string `json:"path"`
+				Kind          string `json:"kind"`
+				Access        string `json:"access"`
+				ExpectedOwner string `json:"expected_owner"`
+				ExpectedGroup string `json:"expected_group"`
+				ExpectedMode  string `json:"expected_mode"`
 			} `json:"permission_targets"`
 		}
 		if err := json.Unmarshal(raw, &policy); err != nil {
@@ -472,7 +572,11 @@ func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 			continue
 		}
 		var hasReadableFile, hasWritableFile bool
+		var hasStaticReadDir bool
 		for _, target := range policy.PermissionTargets {
+			if target.Kind == "dir" && target.Access == "read" && target.ExpectedOwner == "root" && target.ExpectedGroup == "root" && target.ExpectedMode == "0755" {
+				hasStaticReadDir = true
+			}
 			if target.Kind != "file" {
 				continue
 			}
@@ -487,6 +591,9 @@ func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 			default:
 				t.Fatalf("%s file target must declare read or write access: %+v", filepath.Base(policyPath), target)
 			}
+		}
+		if skipsPermissionVariants[filepath.Base(policyPath)] && hasStaticReadDir && !hasReadableFile && !hasWritableFile {
+			continue
 		}
 		if !hasReadableFile || !hasWritableFile {
 			t.Fatalf("%s must declare both readable and writable file permission targets", filepath.Base(policyPath))
