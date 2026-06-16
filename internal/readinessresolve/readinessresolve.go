@@ -1391,6 +1391,7 @@ func dockerRepairPermissions(ctx context.Context, input CandidateInput, target p
 		}
 		script = fmt.Sprintf("mkdir -p %s && chown %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
 	}
+	script = dockerPathSafetyScript(target.Path) + " && " + script
 	before, err := dockerPermissionState(ctx, input, target.Path)
 	if err != nil {
 		return nil, err
@@ -1421,6 +1422,15 @@ func dockerRepairPermissions(ctx context.Context, input CandidateInput, target p
 	}
 	changes = append(changes, newPermissionChange(target, action, before, after))
 	return changes, nil
+}
+
+func dockerPathSafetyScript(relativePath string) string {
+	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(relativePath))
+	return fmt.Sprintf(
+		"candidate=%s; probe=\"$candidate\"; while [ ! -e \"$probe\" ]; do next=$(dirname \"$probe\"); if [ \"$next\" = \"$probe\" ]; then echo %s >&2; exit 73; fi; probe=\"$next\"; done; resolved=$(readlink -f \"$probe\") || exit 73; case \"$resolved\" in /app|/app/*) ;; *) echo \"permission path escapes app root: $candidate -> $resolved\" >&2; exit 73;; esac",
+		shellQuote(containerPath),
+		shellQuote("permission path has no existing parent inside app root"),
+	)
 }
 
 func dockerPackageVerifyCommand(input CandidateInput, packageFile string, verifyURL string, expectedStatus int, bodyContains string) string {

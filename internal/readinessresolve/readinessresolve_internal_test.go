@@ -1,6 +1,9 @@
 package readinessresolve
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizePermissionTargetsDoesNotInheritPolicyIdentityForReadOnlyFiles(t *testing.T) {
 	t.Parallel()
@@ -54,5 +57,22 @@ func TestNormalizePermissionTargetsDoesNotInheritPolicyIdentityForReadOnlyFiles(
 	writableDir := targets[2]
 	if writableDir.ExpectedOwner != "app" || writableDir.ExpectedGroup != "app" {
 		t.Fatalf("writable dir target should inherit runtime identity, got owner=%q group=%q", writableDir.ExpectedOwner, writableDir.ExpectedGroup)
+	}
+}
+
+func TestDockerPathSafetyScriptBlocksSymlinkEscapes(t *testing.T) {
+	t.Parallel()
+
+	script := dockerPathSafetyScript("storage/logs")
+	for _, snippet := range []string{
+		"candidate='/app/storage/logs'",
+		"while [ ! -e \"$probe\" ]; do",
+		"resolved=$(readlink -f \"$probe\")",
+		"case \"$resolved\" in /app|/app/*)",
+		"permission path escapes app root",
+	} {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("docker path safety script missing %q:\n%s", snippet, script)
+		}
 	}
 }
