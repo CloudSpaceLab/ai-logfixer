@@ -546,6 +546,198 @@ exit 1
 	}
 }
 
+func TestResolvePermissionDriftCreatesMissingDockerReadFileUnderAllowlistedRuntimeDir(t *testing.T) {
+	appDir := t.TempDir()
+	stateDir := filepath.Join(appDir, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	dataDirMarker := filepath.Join(stateDir, "data-dir")
+	readFileMarker := filepath.Join(stateDir, "readiness-json")
+	writeFileMarker := filepath.Join(stateDir, "startup-lock")
+	restartNeededMarker := filepath.Join(stateDir, "restart-needed")
+	if err := os.WriteFile(restartNeededMarker, []byte("restart required\n"), 0o644); err != nil {
+		t.Fatalf("write restart marker: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane": "permission-drift",
+		"permission_targets": []map[string]any{
+			{
+				"path":           "data",
+				"kind":           "dir",
+				"access":         "write",
+				"expected_owner": "root",
+				"expected_group": "app",
+				"expected_mode":  "0775",
+			},
+			{
+				"path":          "data/readiness.json",
+				"kind":          "file",
+				"access":        "read",
+				"expected_mode": "0644",
+			},
+			{
+				"path":           "data/startup.lock",
+				"kind":           "file",
+				"access":         "write",
+				"expected_owner": "root",
+				"expected_group": "app",
+				"expected_mode":  "0664",
+			},
+		},
+		"expected_owner": "app",
+		"expected_group": "app",
+		"allowed_restart_targets": []string{
+			"permission-drift-go-restart-api",
+		},
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: open data/startup.lock: permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if _, err := os.Stat(readFileMarker); err != nil {
+			http.Error(writer, "permission drift: read data/readiness.json: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := os.Stat(writeFileMarker); err != nil {
+			http.Error(writer, "permission drift: open data/startup.lock: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := os.Stat(restartNeededMarker); err == nil {
+			http.Error(writer, "restart required", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	fakeBin := t.TempDir()
+	dockerPath := filepath.Join(fakeBin, "docker")
+	script := `#!/bin/sh
+set -eu
+if [ "$1" != "compose" ]; then
+  echo unexpected docker args: "$@" >&2
+  exit 1
+fi
+if [ "$6" = "restart" ]; then
+  test "$7" = "permission-drift-go-restart-api"
+  test -f "$AI_LOGFIXER_TEST_DOCKER_READ_FILE"
+  test -f "$AI_LOGFIXER_TEST_DOCKER_WRITE_FILE"
+  rm -f "$AI_LOGFIXER_TEST_RESTART_MARKER"
+  exit 0
+fi
+script="${13:-}"
+case "$script" in
+  *"stat -c"*)
+    case "$script" in
+      *"'/app/data/readiness.json'"*)
+        if [ -f "$AI_LOGFIXER_TEST_DOCKER_READ_FILE" ]; then
+          printf 'exists\tregular empty file\t644\t0\t10001\n'
+        else
+          printf 'missing\n'
+        fi
+        exit 0
+        ;;
+      *"'/app/data/startup.lock'"*)
+        if [ -f "$AI_LOGFIXER_TEST_DOCKER_WRITE_FILE" ]; then
+          printf 'exists\tregular empty file\t664\t0\t10001\n'
+        else
+          printf 'missing\n'
+        fi
+        exit 0
+        ;;
+      *"'/app/data'"*)
+        if [ -f "$AI_LOGFIXER_TEST_DOCKER_DATA_DIR" ]; then
+          printf 'exists\tdirectory\t775\t0\t10001\n'
+        else
+          printf 'missing\n'
+        fi
+        exit 0
+        ;;
+    esac
+    ;;
+  *"mkdir -p '/app/data'"*)
+    : > "$AI_LOGFIXER_TEST_DOCKER_DATA_DIR"
+    exit 0
+    ;;
+  *"'/app/data/readiness.json'"*)
+    case "$script" in
+      *": > '/app/data/readiness.json'"*)
+        test -f "$AI_LOGFIXER_TEST_DOCKER_DATA_DIR"
+        : > "$AI_LOGFIXER_TEST_DOCKER_READ_FILE"
+        exit 0
+        ;;
+    esac
+    echo missing readable file target was not created >&2
+    exit 1
+    ;;
+  *"'/app/data/startup.lock'"*)
+    case "$script" in
+      *": > '/app/data/startup.lock'"*)
+        test -f "$AI_LOGFIXER_TEST_DOCKER_DATA_DIR"
+        : > "$AI_LOGFIXER_TEST_DOCKER_WRITE_FILE"
+        exit 0
+        ;;
+    esac
+    echo missing writable file target was not created >&2
+    exit 1
+    ;;
+esac
+echo unexpected docker exec script: "$script" >&2
+exit 1
+`
+	if err := os.WriteFile(dockerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AI_LOGFIXER_TEST_DOCKER_DATA_DIR", dataDirMarker)
+	t.Setenv("AI_LOGFIXER_TEST_DOCKER_READ_FILE", readFileMarker)
+	t.Setenv("AI_LOGFIXER_TEST_DOCKER_WRITE_FILE", writeFileMarker)
+	t.Setenv("AI_LOGFIXER_TEST_RESTART_MARKER", restartNeededMarker)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-go-restart-api",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-go-restart-api",
+		DockerService:       "permission-drift-go-restart-api",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		ComposeFile:         filepath.Join(appDir, "docker-compose.yml"),
+		ComposeProject:      "test-project",
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve missing Docker permission targets: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved permission response, got %+v", response)
+	}
+	if response.RestartedService != "permission-drift-go-restart-api" {
+		t.Fatalf("expected allowlisted restart evidence, got %+v", response)
+	}
+	var readChange *readinessresolve.PermissionChange
+	for i := range response.PermissionChanges {
+		if response.PermissionChanges[i].Path == "data/readiness.json" {
+			readChange = &response.PermissionChanges[i]
+			break
+		}
+	}
+	if readChange == nil || readChange.Action != "create_readable_file" || readChange.BeforeExists || !readChange.AfterExists {
+		t.Fatalf("expected explicit missing read-file creation receipt, got %+v", response.PermissionChanges)
+	}
+}
+
 func TestResolvePermissionDriftRepairsAllowlistedFileTarget(t *testing.T) {
 	t.Parallel()
 

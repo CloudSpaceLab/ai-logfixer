@@ -919,13 +919,14 @@ func repairLocalPermissions(appDir string, target permissionTarget, policy permi
 		}
 		info, err := os.Stat(path)
 		created := false
-		if os.IsNotExist(err) && target.Access == "write" {
+		createMissingReadFile := canCreateMissingReadFileTarget(target, policy)
+		if os.IsNotExist(err) && (target.Access == "write" || createMissingReadFile) {
 			file, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 			if createErr != nil {
-				return nil, fmt.Errorf("create writable file target %s: %w", target.Path, createErr)
+				return nil, fmt.Errorf("create file target %s: %w", target.Path, createErr)
 			}
 			if closeErr := file.Close(); closeErr != nil {
-				return nil, fmt.Errorf("close writable file target %s: %w", target.Path, closeErr)
+				return nil, fmt.Errorf("close file target %s: %w", target.Path, closeErr)
 			}
 			created = true
 			info, err = os.Stat(path)
@@ -945,7 +946,10 @@ func repairLocalPermissions(appDir string, target permissionTarget, policy permi
 		}
 		action := "repair_file_permissions"
 		if created {
-			action = "create_writable_file"
+			action = "create_readable_file"
+			if target.Access == "write" {
+				action = "create_writable_file"
+			}
 		}
 		changes = append(changes, newPermissionChange(target, action, before, after))
 	default:
@@ -1000,6 +1004,28 @@ func fileParentSearchPath(target permissionTarget, policy permissionPolicy) (str
 		}
 	}
 	return parent, true
+}
+
+func canCreateMissingReadFileTarget(target permissionTarget, policy permissionPolicy) bool {
+	if target.Kind != "file" || target.Access != "read" {
+		return false
+	}
+	parent := filepath.ToSlash(filepath.Clean(filepath.Dir(filepath.Clean(target.Path))))
+	if parent == "." || parent == "/" {
+		return false
+	}
+	for _, declared := range policy.Targets {
+		if declared.Kind != "dir" {
+			continue
+		}
+		if declared.Access != "" && declared.Access != "write" {
+			continue
+		}
+		if filepath.ToSlash(filepath.Clean(declared.Path)) == parent {
+			return true
+		}
+	}
+	return false
 }
 
 func localPermissionState(appDir string, relativePath string) (permissionState, error) {
@@ -1452,7 +1478,8 @@ func dockerRepairPermissions(ctx context.Context, input CandidateInput, target p
 			}
 			hasParentChange = true
 		}
-		if target.Access == "write" {
+		createMissingReadFile := canCreateMissingReadFileTarget(target, policy)
+		if target.Access == "write" || createMissingReadFile {
 			script += fmt.Sprintf("if [ ! -e %s ]; then : > %s; fi && ", shellQuote(containerPath), shellQuote(containerPath))
 		}
 		script += fmt.Sprintf("test -f %s", shellQuote(containerPath))
@@ -1494,6 +1521,9 @@ func dockerRepairPermissions(ctx context.Context, input CandidateInput, target p
 		action = "repair_file_permissions"
 		if !before.Exists && target.Access == "write" {
 			action = "create_writable_file"
+		}
+		if !before.Exists && target.Access == "read" && canCreateMissingReadFileTarget(target, policy) {
+			action = "create_readable_file"
 		}
 	}
 	changes = append(changes, newPermissionChange(target, action, before, after))
