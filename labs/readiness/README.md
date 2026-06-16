@@ -65,7 +65,7 @@ labs/readiness/bin/run-permission-endurance.py \
   --candidate-command './tmp/ai-logfixer-readiness-resolve --input "$AI_LOGFIXER_CANDIDATE_INPUT"'
 ```
 
-Use `--duration-seconds 21600` for a six-hour run. Add `--cycles` only when you also want a hard cycle cap. The endurance runner calls the normal Docker lab with `--lane permission-drift`, writes each cycle under `tmp/permission-endurance/<timestamp>/cycle-XXXX`, and writes a top-level `endurance-report.json`. Permission variants currently include `mode-strict`, `missing`, `parent-no-exec`, `owner-root`, `file-unreadable`, and `file-unwritable`.
+Use `--duration-seconds 21600` for a six-hour run. Add `--cycles` only when you also want a hard cycle cap. The endurance runner calls the normal Docker lab with `--lane permission-drift`, writes each cycle under `tmp/permission-endurance/<timestamp>/cycle-XXXX`, and writes a top-level `endurance-report.json`. Permission variants currently include `mode-strict`, `missing`, `parent-no-exec`, `owner-root`, `group-root`, `file-unreadable`, and `file-unwritable`.
 
 Each candidate process receives:
 
