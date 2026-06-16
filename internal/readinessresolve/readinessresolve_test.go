@@ -731,6 +731,58 @@ func TestResolvePermissionDriftRejectsWorldWritablePolicy(t *testing.T) {
 	}
 }
 
+func TestResolvePermissionDriftBlocksSymlinkEscapeBeforeRepair(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(appDir, "storage")); err != nil {
+		t.Fatalf("create escaping storage symlink: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":           "permission-drift",
+		"allowed_paths":  []string{"storage/logs"},
+		"expected_mode":  "0775",
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: write storage/logs/audit.log: permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-symlink-escape",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-symlink-escape",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err == nil {
+		t.Fatal("expected symlink escape to block permission remediation")
+	}
+	if !strings.Contains(err.Error(), "escapes app_dir") {
+		t.Fatalf("expected symlink escape error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "logs")); !os.IsNotExist(statErr) {
+		t.Fatalf("permission repair must not create escaped outside path, stat error=%v", statErr)
+	}
+}
+
 func TestResolveRestartReloadRunsAllowlistedDockerRestart(t *testing.T) {
 	appDir := t.TempDir()
 	marker := filepath.Join(appDir, "runtime", "restart-required")

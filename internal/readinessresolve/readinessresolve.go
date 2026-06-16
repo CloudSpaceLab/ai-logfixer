@@ -695,7 +695,54 @@ func joinInsideApp(appDir string, relativePath string) (string, error) {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%s escapes app_dir", relativePath)
 	}
+	if err := ensureResolvedInsideApp(appAbs, candidate, relativePath); err != nil {
+		return "", err
+	}
 	return candidate, nil
+}
+
+func ensureResolvedInsideApp(appAbs string, candidate string, relativePath string) error {
+	root, err := filepath.EvalSymlinks(appAbs)
+	if err != nil {
+		return fmt.Errorf("resolve app_dir symlinks: %w", err)
+	}
+	rel, err := filepath.Rel(appAbs, candidate)
+	if err != nil {
+		return err
+	}
+	current := appAbs
+	for _, part := range strings.Split(filepath.Clean(rel), string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(current)
+		if err != nil {
+			return fmt.Errorf("resolve symlink %s: %w", relativePath, err)
+		}
+		if !pathInside(root, resolved) {
+			return fmt.Errorf("%s escapes app_dir through symlink", relativePath)
+		}
+	}
+	return nil
+}
+
+func pathInside(root string, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func readJSONString(path string, keyPath string) (string, error) {
