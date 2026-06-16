@@ -566,8 +566,10 @@ func normalizePermissionTargets(policy permissionPolicy) ([]permissionTarget, er
 			}
 			target.Access = strings.TrimSpace(target.Access)
 			target.ExpectedMode = firstNonEmpty(target.ExpectedMode, policy.ExpectedMode)
-			target.ExpectedOwner = firstNonEmpty(target.ExpectedOwner, policy.ExpectedOwner)
-			target.ExpectedGroup = firstNonEmpty(target.ExpectedGroup, policy.ExpectedGroup)
+			if permissionTargetShouldInheritPolicyIdentity(target) {
+				target.ExpectedOwner = firstNonEmpty(target.ExpectedOwner, policy.ExpectedOwner)
+				target.ExpectedGroup = firstNonEmpty(target.ExpectedGroup, policy.ExpectedGroup)
+			}
 			if err := validatePermissionTarget(target); err != nil {
 				return nil, err
 			}
@@ -597,6 +599,25 @@ func normalizePermissionTargets(policy permissionPolicy) ([]permissionTarget, er
 		targets = append(targets, target)
 	}
 	return targets, nil
+}
+
+func permissionTargetShouldInheritPolicyIdentity(target permissionTarget) bool {
+	return !(target.Kind == "file" && target.Access == "read" && target.ExpectedOwner == "" && target.ExpectedGroup == "")
+}
+
+func permissionRepairIdentity(target permissionTarget) (string, string, bool) {
+	owner := strings.TrimSpace(target.ExpectedOwner)
+	group := strings.TrimSpace(target.ExpectedGroup)
+	if owner == "" && group == "" {
+		return "", "", false
+	}
+	if owner == "" {
+		owner = group
+	}
+	if group == "" {
+		group = owner
+	}
+	return owner, group, true
 }
 
 func validatePermissionTarget(target permissionTarget) error {
@@ -1329,8 +1350,7 @@ func sanitizeFilename(value string) string {
 
 func dockerRepairPermissions(ctx context.Context, input CandidateInput, target permissionTarget, policy permissionPolicy) ([]PermissionChange, error) {
 	containerPath := "/app/" + filepath.ToSlash(filepath.Clean(target.Path))
-	owner := firstNonEmpty(target.ExpectedOwner, policy.ExpectedOwner, "app")
-	group := firstNonEmpty(target.ExpectedGroup, policy.ExpectedGroup, owner)
+	owner, group, shouldChown := permissionRepairIdentity(target)
 	mode := target.ExpectedMode
 	var changes []PermissionChange
 	var parentTarget permissionTarget
@@ -1359,8 +1379,16 @@ func dockerRepairPermissions(ctx context.Context, input CandidateInput, target p
 		if target.Access == "write" {
 			script += fmt.Sprintf("if [ ! -e %s ]; then : > %s; fi && ", shellQuote(containerPath), shellQuote(containerPath))
 		}
-		script += fmt.Sprintf("test -f %s && chown %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
+		script += fmt.Sprintf("test -f %s", shellQuote(containerPath))
+		if shouldChown {
+			script += fmt.Sprintf(" && chown %s:%s %s", shellQuote(owner), shellQuote(group), shellQuote(containerPath))
+		}
+		script += fmt.Sprintf(" && chmod %s %s", shellQuote(mode), shellQuote(containerPath))
 	} else {
+		if !shouldChown {
+			owner = "app"
+			group = "app"
+		}
 		script = fmt.Sprintf("mkdir -p %s && chown %s:%s %s && chmod %s %s", shellQuote(containerPath), shellQuote(owner), shellQuote(group), shellQuote(containerPath), shellQuote(mode), shellQuote(containerPath))
 	}
 	before, err := dockerPermissionState(ctx, input, target.Path)
