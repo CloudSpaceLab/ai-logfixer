@@ -64,6 +64,7 @@ type Response struct {
 	Receipt           *contractsv1.Receipt            `json:"receipt,omitempty"`
 	BackupPath        string                          `json:"backup_path,omitempty"`
 	RollbackPath      string                          `json:"rollback_path,omitempty"`
+	RestartedService  string                          `json:"restarted_service,omitempty"`
 	PermissionChanges []PermissionChange              `json:"permission_changes,omitempty"`
 }
 
@@ -227,15 +228,16 @@ type packageHistory struct {
 }
 
 type permissionPolicy struct {
-	Lane              string             `json:"lane"`
-	Framework         string             `json:"framework"`
-	AllowedPaths      []string           `json:"allowed_paths"`
-	PermissionTargets []permissionTarget `json:"permission_targets"`
-	ExpectedOwner     string             `json:"expected_owner"`
-	ExpectedGroup     string             `json:"expected_group"`
-	ExpectedMode      string             `json:"expected_mode"`
-	Verification      policyVerification `json:"verification"`
-	Targets           []permissionTarget `json:"-"`
+	Lane                  string             `json:"lane"`
+	Framework             string             `json:"framework"`
+	AllowedPaths          []string           `json:"allowed_paths"`
+	PermissionTargets     []permissionTarget `json:"permission_targets"`
+	ExpectedOwner         string             `json:"expected_owner"`
+	ExpectedGroup         string             `json:"expected_group"`
+	ExpectedMode          string             `json:"expected_mode"`
+	AllowedRestartTargets []string           `json:"allowed_restart_targets"`
+	Verification          policyVerification `json:"verification"`
+	Targets               []permissionTarget `json:"-"`
 }
 
 type permissionTarget struct {
@@ -396,10 +398,28 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 		return Response{}, err
 	}
 	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
+		restartedService, restartErr := restartPermissionServiceIfAllowed(ctx, input, policy)
+		if restartErr != nil {
+			err = fmt.Errorf("%w; restart attempt failed: %v", err, restartErr)
+		}
+		if restartedService != "" && restartErr == nil {
+			if verifyErr := verifyLiveProbe(ctx, input, policy.Verification); verifyErr == nil {
+				response := baseResponse(input, StatusResolved, true, "permission-drift resolver completed after allowlisted restart")
+				response.PermissionChanges = changes
+				response.RollbackPath = rollbackPath
+				response.RestartedService = restartedService
+				response.RemediationPlan, response.Attempt, response.Receipt = buildPermissionResolutionContracts(input, changes, rollbackPath)
+				appendPermissionRestartEvidence(response.RemediationPlan, response.Attempt, response.Receipt, restartedService)
+				return response, nil
+			} else {
+				err = fmt.Errorf("%w; verification after restart failed: %v", err, verifyErr)
+			}
+		}
 		rollbackErr := rollbackPermissionChanges(input, changes)
 		response := baseResponse(input, StatusFailed, true, "permission-drift verification failed after repair; rollback attempted")
 		response.PermissionChanges = changes
 		response.RollbackPath = rollbackPath
+		response.RestartedService = restartedService
 		response.RemediationPlan, response.Attempt, response.Receipt = buildPermissionRollbackContracts(input, changes, rollbackPath, err, rollbackErr)
 		if rollbackErr != nil {
 			return response, fmt.Errorf("permission-drift verification failed: %w; rollback failed: %v", err, rollbackErr)
@@ -424,16 +444,39 @@ func resolveRestartReload(ctx context.Context, input CandidateInput) (Response, 
 	if !hasDockerTarget(input) {
 		return Response{}, errors.New("restart-reload readiness remediation requires compose file, project, and docker service")
 	}
-	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "restart", input.DockerService}
-	command := exec.CommandContext(ctx, "docker", args...)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return Response{}, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	if err := restartDockerService(ctx, input); err != nil {
+		return Response{}, err
 	}
 	if err := verifyLiveProbe(ctx, input, policy.Verification); err != nil {
 		return Response{}, err
 	}
 	return baseResponse(input, StatusResolved, true, "restart-reload resolver completed"), nil
+}
+
+func restartPermissionServiceIfAllowed(ctx context.Context, input CandidateInput, policy permissionPolicy) (string, error) {
+	if len(policy.AllowedRestartTargets) == 0 {
+		return "", nil
+	}
+	if !hasDockerTarget(input) {
+		return "", errors.New("permission-drift restart requires compose file, project, and docker service")
+	}
+	if !containsString(policy.AllowedRestartTargets, input.DockerService) {
+		return "", fmt.Errorf("restart target %q is not allowlisted by permission policy", input.DockerService)
+	}
+	if err := restartDockerService(ctx, input); err != nil {
+		return "", err
+	}
+	return input.DockerService, nil
+}
+
+func restartDockerService(ctx context.Context, input CandidateInput) error {
+	args := []string{"compose", "-f", input.ComposeFile, "-p", input.ComposeProject, "restart", input.DockerService}
+	command := exec.CommandContext(ctx, "docker", args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func loadConfigPolicy(path string) (configPolicy, error) {
@@ -1280,6 +1323,39 @@ func buildPermissionRollbackContracts(input CandidateInput, changes []Permission
 	receipt.Summary = summary
 	receipt.ActionTaken = permissionChangesActionSummary(changes) + "; rollback " + outcome
 	return plan, attempt, receipt
+}
+
+func appendPermissionRestartEvidence(plan *contractsv1.RemediationPlan, attempt *contractsv1.RemediationAttempt, receipt *contractsv1.Receipt, service string) {
+	if strings.TrimSpace(service) == "" {
+		return
+	}
+	restartAction := "restart " + service
+	if plan != nil {
+		plan.UserMessage = appendSentence(plan.UserMessage, "AI LogFixer restarted the allowlisted service after repaired permissions still required a reload.")
+	}
+	if attempt != nil {
+		attempt.UserMessage = appendSentence(attempt.UserMessage, "Allowlisted service restart completed after the first verification stayed unhealthy.")
+		attempt.MonitorSummary.Signals = append(attempt.MonitorSummary.Signals, "restart="+service)
+		attempt.MonitorSummary.Message = appendSentence(attempt.MonitorSummary.Message, "Allowlisted service restart applied after stale verification.")
+	}
+	if receipt != nil {
+		receipt.ActionTaken = appendAction(receipt.ActionTaken, restartAction)
+		receipt.Summary = appendSentence(receipt.Summary, "AI LogFixer restarted the allowlisted service and verified recovery.")
+	}
+}
+
+func appendAction(existing string, addition string) string {
+	if strings.TrimSpace(existing) == "" {
+		return addition
+	}
+	return existing + "; " + addition
+}
+
+func appendSentence(existing string, addition string) string {
+	if strings.TrimSpace(existing) == "" {
+		return addition
+	}
+	return strings.TrimSpace(existing) + " " + addition
 }
 
 func permissionChangesBeforeSummary(changes []PermissionChange) string {

@@ -433,6 +433,119 @@ func TestResolvePermissionDriftRollsBackLocalRepairWhenVerificationFails(t *test
 	}
 }
 
+func TestResolvePermissionDriftRestartsAllowlistedDockerServiceAfterStaleVerification(t *testing.T) {
+	appDir := t.TempDir()
+	stateDir := filepath.Join(appDir, "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state dir: %v", err)
+	}
+	permissionFixedMarker := filepath.Join(stateDir, "permission-fixed")
+	restartNeededMarker := filepath.Join(stateDir, "restart-needed")
+	if err := os.WriteFile(restartNeededMarker, []byte("restart required\n"), 0o644); err != nil {
+		t.Fatalf("write restart marker: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":                    "permission-drift",
+		"allowed_paths":           []string{"storage"},
+		"expected_mode":           "0775",
+		"expected_owner":          "app",
+		"expected_group":          "app",
+		"allowed_restart_targets": []string{"permission-drift-restart-api"},
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: storage not writable; process cache still stale after repair\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if _, err := os.Stat(permissionFixedMarker); os.IsNotExist(err) {
+			http.Error(writer, "permission denied", http.StatusInternalServerError)
+			return
+		}
+		if _, err := os.Stat(restartNeededMarker); err == nil {
+			http.Error(writer, "restart required", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	fakeBin := t.TempDir()
+	dockerPath := filepath.Join(fakeBin, "docker")
+	script := `#!/bin/sh
+set -eu
+if [ "$1" != "compose" ]; then
+  echo unexpected docker args: "$@" >&2
+  exit 1
+fi
+if [ "$6" = "restart" ]; then
+  test "$7" = "permission-drift-restart-api"
+  test -f "$AI_LOGFIXER_TEST_PERMISSION_FIXED_MARKER"
+  rm -f "$AI_LOGFIXER_TEST_RESTART_MARKER"
+  exit 0
+fi
+script="${13:-}"
+case "$script" in
+  *"stat -c"*)
+    if [ -f "$AI_LOGFIXER_TEST_PERMISSION_FIXED_MARKER" ]; then
+      printf 'exists\tdirectory\t775\t10001\t10001\n'
+    else
+      printf 'exists\tdirectory\t555\t0\t0\n'
+    fi
+    exit 0
+    ;;
+  *"chmod '0775' '/app/storage'"*)
+    : > "$AI_LOGFIXER_TEST_PERMISSION_FIXED_MARKER"
+    exit 0
+    ;;
+esac
+echo unexpected docker exec script: "$script" >&2
+exit 1
+`
+	if err := os.WriteFile(dockerPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AI_LOGFIXER_TEST_PERMISSION_FIXED_MARKER", permissionFixedMarker)
+	t.Setenv("AI_LOGFIXER_TEST_RESTART_MARKER", restartNeededMarker)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-restart-api",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-restart-api",
+		DockerService:       "permission-drift-restart-api",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		ComposeFile:         filepath.Join(appDir, "docker-compose.yml"),
+		ComposeProject:      "test-project",
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve restart-sensitive permission drift: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved permission response after restart, got %+v", response)
+	}
+	if response.RestartedService != "permission-drift-restart-api" {
+		t.Fatalf("expected restart evidence on response, got %+v", response)
+	}
+	if _, err := os.Stat(restartNeededMarker); !os.IsNotExist(err) {
+		t.Fatalf("expected allowlisted restart to clear stale process marker, stat err=%v", err)
+	}
+	if response.Receipt == nil || !strings.Contains(response.Receipt.ActionTaken, "restart permission-drift-restart-api") {
+		t.Fatalf("expected receipt to include restart evidence, got %+v", response.Receipt)
+	}
+}
+
 func TestResolvePermissionDriftRepairsAllowlistedFileTarget(t *testing.T) {
 	t.Parallel()
 

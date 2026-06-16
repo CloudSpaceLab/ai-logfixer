@@ -149,6 +149,43 @@ func TestPermissionDriftManifestIncludesDockerSymlinkEscapeFixture(t *testing.T)
 	t.Fatal("permission-drift Docker symlink escape fixture missing from readiness manifest")
 }
 
+func TestPermissionDriftManifestIncludesRestartReloadFixture(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var doc manifest
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	for _, item := range doc.Scenarios {
+		if item.ID != "permission-drift-go-restart" {
+			continue
+		}
+		if item.OperationalLane != "permission-drift" || item.Runtime != "go" {
+			t.Fatalf("%s should cover Go permission-drift restart behavior, got lane=%q runtime=%q", item.ID, item.OperationalLane, item.Runtime)
+		}
+		policyRaw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", item.PolicyFile))
+		if err != nil {
+			t.Fatalf("read restart permission policy: %v", err)
+		}
+		var policy struct {
+			AllowedRestartTargets []string `json:"allowed_restart_targets"`
+		}
+		if err := json.Unmarshal(policyRaw, &policy); err != nil {
+			t.Fatalf("decode restart permission policy: %v", err)
+		}
+		if !containsString(policy.AllowedRestartTargets, item.DockerService) {
+			t.Fatalf("%s policy must allowlist its exact Docker service for bounded restart, got %v", item.ID, policy.AllowedRestartTargets)
+		}
+		return
+	}
+	t.Fatal("permission-drift restart/reload fixture missing from readiness manifest")
+}
+
 func TestPermissionDriftManifestCoversIssue45Platforms(t *testing.T) {
 	root := repoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
@@ -716,4 +753,13 @@ func repoRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
