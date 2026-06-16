@@ -39,6 +39,7 @@ Benchmark mode is expected to fail today without `AI_LOGFIXER_CANDIDATE_COMMAND`
 | `permission-drift-node-express` | permission drift | Node/Express | `uploads` is not writable by app user | repair allowlisted owner/mode |
 | `permission-drift-python-flask` | permission drift | Python Flask | `instance` is not writable by app user | repair allowlisted owner/mode |
 | `permission-drift-php-laravel-style` | permission drift | PHP Laravel-style | `storage/logs` is not writable by app user | repair allowlisted owner/mode |
+| `permission-drift-php-laravel-inferred` | permission drift | PHP Laravel-style | `storage/logs` is not writable by app user | infer Laravel runtime paths and repair bounded owner/mode |
 | `permission-drift-ruby-lightweight` | permission drift | Ruby lightweight HTTP | `storage` is not writable by app user | repair allowlisted owner/mode |
 | `permission-drift-java-lightweight` | permission drift | Java lightweight HTTP | `logs` is not writable by app user | repair allowlisted owner/mode |
 | `restart-reload-api` | restart/reload | Go net/http | process is serving stale runtime state | restart the allowlisted service only |
@@ -85,7 +86,7 @@ Each candidate process receives:
 
 The candidate must remediate the copied lab workspace or running copied containers. It must not modify the source fixtures in the repository.
 
-`ai-logfixer-readiness-resolve` currently supports `config-drift` by routing the candidate input through Runtime V2 config remediation. It reads the scenario policy, patches only the first allowlisted config key from the first trusted source, verifies the live probe, and emits structured JSON. Other lanes emit a structured `unsupported` response and do not attempt remediation on `main`.
+`ai-logfixer-readiness-resolve` supports bounded `config-drift`, `package-regression`, `permission-drift`, and `restart-reload` remediation. For permission drift, explicit `permission_targets` remain authoritative; if a permission policy omits explicit targets, the resolver can infer framework runtime paths from the copied app workspace and repair only those bounded paths.
 
 ## Artifacts
 
@@ -117,6 +118,7 @@ Set `AI_LOGFIXER_KEEP_READINESS_LAB=1` to keep the copied workspace and Compose 
 | Permission drift PHP Laravel-style | `18087` |
 | Permission drift Ruby lightweight | `18088` |
 | Permission drift Java lightweight | `18089` |
+| Permission drift PHP Laravel inferred | `18090` |
 
 ## Manual Probe
 

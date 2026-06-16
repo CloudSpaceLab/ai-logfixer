@@ -160,10 +160,13 @@ manifest = json.loads(Path(sys.argv[1]).read_text())
 lab_root = Path(sys.argv[2]).resolve()
 variant = sys.argv[3]
 
-def permission_targets(policy):
+def permission_targets(policy, scenario):
     targets = policy.get("permission_targets") or []
     if targets:
         return targets
+    hidden_targets = scenario.get("permission_break_targets") or []
+    if hidden_targets:
+        return hidden_targets
     expected_mode = policy.get("expected_mode", "0775")
     return [
         {"path": relative_path, "kind": "dir", "access": "write", "expected_mode": expected_mode}
@@ -249,7 +252,7 @@ for scenario in manifest["scenarios"]:
     if scenario["operational_lane"] != "permission-drift":
         continue
     policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-    commands = variant_commands(policy, permission_targets(policy))
+    commands = variant_commands(policy, permission_targets(policy, scenario))
     if commands:
         print("\t".join([scenario["docker_service"], " && ".join(commands)]))
 PY
@@ -378,10 +381,13 @@ import sys
 manifest = json.loads(Path(sys.argv[1]).read_text())
 lab_root = Path(sys.argv[2]).resolve()
 
-def permission_targets(policy):
+def permission_targets(policy, scenario):
     targets = policy.get("permission_targets") or []
     if targets:
         return targets
+    hidden_targets = scenario.get("permission_break_targets") or []
+    if hidden_targets:
+        return hidden_targets
     expected_mode = policy.get("expected_mode", "0775")
     return [
         {"path": relative_path, "kind": "dir", "access": "write", "expected_mode": expected_mode}
@@ -393,7 +399,7 @@ for scenario in manifest["scenarios"]:
     commands = ["id"]
     if lane == "permission-drift":
         policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-        for target in permission_targets(policy):
+        for target in permission_targets(policy, scenario):
             container_path = "/app/" + target["path"].strip("/")
             commands.append("printf '%s\\n' " + shlex.quote("--- " + container_path))
             commands.append("ls -ld " + shlex.quote(container_path) + " 2>/dev/null || true")

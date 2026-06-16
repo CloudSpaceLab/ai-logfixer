@@ -4,21 +4,11 @@ Runtime V2 permissions mode repairs framework-owned writable runtime paths from 
 
 ## Current Capability
 
-The first supported framework policy is Laravel. Auto-detection requires both:
+Framework permission policies cover Laravel, Rails, Express, Flask, FastAPI, Go, Java, and lightweight Ruby services. Auto-detection uses local app markers such as `artisan` plus `composer.json`, Rails `Gemfile` or `config/application.rb`, Express `package.json`, Python dependency manifests, `go.mod`, Java build files, and Ruby `Gemfile`.
 
-- `artisan`
-- `composer.json`
+Each inferred path must stay inside the app root, must match its declared kind, and must use a non-world-writable expected mode. Runtime V2 records UID, GID, mode, and write-probe evidence before planning a repair.
 
-The Laravel policy checks these runtime directories:
-
-- `storage`
-- `storage/logs`
-- `storage/framework/cache`
-- `storage/framework/sessions`
-- `storage/framework/views`
-- `bootstrap/cache`
-
-Each path must stay inside the app root, must be a directory, and must match mode `0775`. Runtime V2 also records UID, GID, mode, and write-probe evidence before planning a repair.
+The readiness resolver also uses this framework policy engine for permission-drift policies that omit explicit `permission_targets` and `allowed_paths`. Explicit policy targets remain authoritative; inference is only the fallback for targetless policies.
 
 ## Command
 
@@ -57,15 +47,14 @@ The command emits the normal AI LogFixer contracts plus permission-specific JSON
 
 - No path outside the app root can be repaired.
 - Symlink escapes are blocked.
-- Non-directory policy paths are blocked.
+- Policy paths with the wrong kind are blocked.
 - `0777` is forbidden by policy.
 - Apply mode writes a rollback manifest before making changes.
 - If access probes or HTTP verification fail after a repair, Runtime V2 attempts to restore recorded modes.
-- Ownership and ACL repair are intentionally blocked in this MVP unless a future policy can prove the runtime user and safe ownership target.
+- Docker readiness remediation repairs only inferred or explicitly allowlisted paths with bounded owner/group/mode values and records rollback evidence.
 
 ## Follow-Up Work
 
-- Add ownership and ACL repair once runtime user detection is reliable.
-- Add Rails, Express, Flask/FastAPI, Go, Ruby, and Java policies.
-- Connect permissions mode to the Docker readiness candidate interface.
 - Add framework policy refresh/research tooling that can update local policies without widening runtime write authority.
+- Expand framework-specific policies when real framework documentation or black-box failures justify additional paths.
+- Add stronger runtime user detection for stacks where `app:app` is not the correct service identity.

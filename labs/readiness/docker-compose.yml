@@ -50,6 +50,11 @@ services:
     ports:
       - "18087:8080"
 
+  permission-drift-php-laravel-inferred:
+    build: ./apps/permission-drift-php-laravel-inferred
+    ports:
+      - "18090:8080"
+
   permission-drift-ruby-lightweight:
     build: ./apps/permission-drift-ruby-lightweight
     ports:
