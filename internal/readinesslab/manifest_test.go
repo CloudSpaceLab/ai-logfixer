@@ -378,6 +378,8 @@ func TestDockerLabScriptGeneratesFileLevelPermissionVariants(t *testing.T) {
 	requiredSnippets := []string{
 		"permission_targets",
 		"file-unreadable|file-unwritable)",
+		"file_targets = [",
+		"if not file_targets:",
 		"target.get(\"kind\") == \"file\"",
 		"target.get(\"access\") == \"read\"",
 		"commands.append(\"chmod 0000 \" + shlex.quote(path_for(target)))",

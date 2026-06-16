@@ -237,13 +237,22 @@ def variant_commands(policy, targets):
                 commands.append("chmod " + shlex.quote(mode) + " " + shlex.quote(container_path))
         return commands
     if variant in ("file-unreadable", "file-unwritable"):
+        file_targets = [
+            target
+            for target in targets
+            if target.get("kind") == "file"
+            and (
+                (variant == "file-unreadable" and target.get("access") == "read")
+                or (variant == "file-unwritable" and target.get("access") == "write")
+            )
+        ]
+        if not file_targets:
+            return commands
         commands.extend(heal_command(policy, target) for target in targets)
-        for target in targets:
-            if target.get("kind") != "file":
-                continue
-            if variant == "file-unreadable" and target.get("access") == "read":
+        for target in file_targets:
+            if variant == "file-unreadable":
                 commands.append("chmod 0000 " + shlex.quote(path_for(target)))
-            if variant == "file-unwritable" and target.get("access") == "write":
+            if variant == "file-unwritable":
                 commands.append("chmod 0444 " + shlex.quote(path_for(target)))
         return commands
     return commands
