@@ -166,6 +166,37 @@ func TestRunAutoDetectsCommonFrameworkPermissionPolicies(t *testing.T) {
 	}
 }
 
+func TestInferPolicyAutoDetectsFrameworkWithoutMutatingTarget(t *testing.T) {
+	t.Parallel()
+
+	appDir := newPolicyApp(t, map[string]string{
+		"package.json": `{"dependencies":{"express":"^4.18.0"}}` + "\n",
+	})
+
+	inferred, err := permissions.InferPolicy(permissions.Options{
+		ServiceName: "orders-api",
+		TargetDir:   appDir,
+		Framework:   "auto",
+		Now:         fixedTime(),
+	})
+	if err != nil {
+		t.Fatalf("infer permission policy: %v", err)
+	}
+
+	if inferred.Framework != "express" {
+		t.Fatalf("expected express framework, got %q", inferred.Framework)
+	}
+	if inferred.Policy.Framework != "express" {
+		t.Fatalf("expected express policy, got %+v", inferred.Policy)
+	}
+	if !policyHasPath(inferred.Policy, "uploads") {
+		t.Fatalf("expected express policy to include uploads, got %+v", inferred.Policy.ExpectedPaths)
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "uploads")); !os.IsNotExist(err) {
+		t.Fatalf("policy inference must not create uploads; stat error=%v", err)
+	}
+}
+
 func TestRunAppliesMinimalLaravelPermissionRepairAndVerifies(t *testing.T) {
 	t.Parallel()
 

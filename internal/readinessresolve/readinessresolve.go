@@ -18,6 +18,7 @@ import (
 
 	contractsv1 "github.com/CloudSpaceLab/ai-logfixer/internal/contracts/v1"
 	packagerollback "github.com/CloudSpaceLab/ai-logfixer/internal/resolvers/packages"
+	runtimepermissions "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/permissions"
 	runtimev2 "github.com/CloudSpaceLab/ai-logfixer/internal/runtime/v2"
 )
 
@@ -227,6 +228,7 @@ type packageHistory struct {
 
 type permissionPolicy struct {
 	Lane              string             `json:"lane"`
+	Framework         string             `json:"framework"`
 	AllowedPaths      []string           `json:"allowed_paths"`
 	PermissionTargets []permissionTarget `json:"permission_targets"`
 	ExpectedOwner     string             `json:"expected_owner"`
@@ -360,6 +362,11 @@ func resolvePermissionDrift(ctx context.Context, input CandidateInput) (Response
 	if err != nil {
 		return Response{}, err
 	}
+	targets, err := resolvePermissionTargets(input, policy)
+	if err != nil {
+		return Response{}, err
+	}
+	policy.Targets = targets
 	var changes []PermissionChange
 	for _, target := range policy.Targets {
 		relativePath := target.Path
@@ -504,12 +511,48 @@ func loadPermissionPolicy(path string) (permissionPolicy, error) {
 	if normalizeLane(policy.Lane) != "permission-drift" {
 		return permissionPolicy{}, fmt.Errorf("policy lane %q does not match permission-drift", policy.Lane)
 	}
-	targets, err := normalizePermissionTargets(policy)
-	if err != nil {
-		return permissionPolicy{}, err
-	}
-	policy.Targets = targets
 	return policy, nil
+}
+
+func resolvePermissionTargets(input CandidateInput, policy permissionPolicy) ([]permissionTarget, error) {
+	if len(policy.PermissionTargets) > 0 || len(policy.AllowedPaths) > 0 {
+		return normalizePermissionTargets(policy)
+	}
+	return inferPermissionTargets(input, policy)
+}
+
+func inferPermissionTargets(input CandidateInput, policy permissionPolicy) ([]permissionTarget, error) {
+	inferred, err := runtimepermissions.InferPolicy(runtimepermissions.Options{
+		ServiceName: input.ServiceName,
+		TargetDir:   input.AppDir,
+		Framework:   firstNonEmpty(policy.Framework, "auto"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("permission-drift policy has no explicit targets and framework permission inference failed: %w", err)
+	}
+
+	targets := make([]permissionTarget, 0, len(inferred.Policy.ExpectedPaths))
+	for _, expected := range inferred.Policy.ExpectedPaths {
+		target := permissionTarget{
+			Path:          strings.TrimSpace(expected.RelativePath),
+			Kind:          firstNonEmpty(expected.Kind, "dir"),
+			Access:        "read",
+			ExpectedOwner: firstNonEmpty(policy.ExpectedOwner, "app"),
+			ExpectedGroup: firstNonEmpty(policy.ExpectedGroup, "app"),
+			ExpectedMode:  formatPermissionMode(expected.Mode.Perm()),
+		}
+		if expected.Writable {
+			target.Access = "write"
+		}
+		if err := validatePermissionTarget(target); err != nil {
+			return nil, fmt.Errorf("inferred framework permission target: %w", err)
+		}
+		targets = append(targets, target)
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("permission-drift framework permission inference returned no targets")
+	}
+	return targets, nil
 }
 
 func normalizePermissionTargets(policy permissionPolicy) ([]permissionTarget, error) {

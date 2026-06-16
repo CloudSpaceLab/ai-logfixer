@@ -160,10 +160,13 @@ manifest = json.loads(Path(sys.argv[1]).read_text())
 lab_root = Path(sys.argv[2]).resolve()
 variant = sys.argv[3]
 
-def permission_targets(policy):
+def permission_targets(policy, scenario):
     targets = policy.get("permission_targets") or []
     if targets:
         return targets
+    hidden_targets = scenario.get("permission_break_targets") or []
+    if hidden_targets:
+        return hidden_targets
     expected_mode = policy.get("expected_mode", "0775")
     return [
         {"path": relative_path, "kind": "dir", "access": "write", "expected_mode": expected_mode}
@@ -234,13 +237,22 @@ def variant_commands(policy, targets):
                 commands.append("chmod " + shlex.quote(mode) + " " + shlex.quote(container_path))
         return commands
     if variant in ("file-unreadable", "file-unwritable"):
+        file_targets = [
+            target
+            for target in targets
+            if target.get("kind") == "file"
+            and (
+                (variant == "file-unreadable" and target.get("access") == "read")
+                or (variant == "file-unwritable" and target.get("access") == "write")
+            )
+        ]
+        if not file_targets:
+            return commands
         commands.extend(heal_command(policy, target) for target in targets)
-        for target in targets:
-            if target.get("kind") != "file":
-                continue
-            if variant == "file-unreadable" and target.get("access") == "read":
+        for target in file_targets:
+            if variant == "file-unreadable":
                 commands.append("chmod 0000 " + shlex.quote(path_for(target)))
-            if variant == "file-unwritable" and target.get("access") == "write":
+            if variant == "file-unwritable":
                 commands.append("chmod 0444 " + shlex.quote(path_for(target)))
         return commands
     return commands
@@ -249,7 +261,7 @@ for scenario in manifest["scenarios"]:
     if scenario["operational_lane"] != "permission-drift":
         continue
     policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-    commands = variant_commands(policy, permission_targets(policy))
+    commands = variant_commands(policy, permission_targets(policy, scenario))
     if commands:
         print("\t".join([scenario["docker_service"], " && ".join(commands)]))
 PY
@@ -378,10 +390,13 @@ import sys
 manifest = json.loads(Path(sys.argv[1]).read_text())
 lab_root = Path(sys.argv[2]).resolve()
 
-def permission_targets(policy):
+def permission_targets(policy, scenario):
     targets = policy.get("permission_targets") or []
     if targets:
         return targets
+    hidden_targets = scenario.get("permission_break_targets") or []
+    if hidden_targets:
+        return hidden_targets
     expected_mode = policy.get("expected_mode", "0775")
     return [
         {"path": relative_path, "kind": "dir", "access": "write", "expected_mode": expected_mode}
@@ -393,7 +408,7 @@ for scenario in manifest["scenarios"]:
     commands = ["id"]
     if lane == "permission-drift":
         policy = json.loads((lab_root / scenario["policy_file"]).read_text())
-        for target in permission_targets(policy):
+        for target in permission_targets(policy, scenario):
             container_path = "/app/" + target["path"].strip("/")
             commands.append("printf '%s\\n' " + shlex.quote("--- " + container_path))
             commands.append("ls -ld " + shlex.quote(container_path) + " 2>/dev/null || true")

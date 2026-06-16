@@ -221,6 +221,86 @@ func TestResolvePermissionDriftRepairsAllowlistedPath(t *testing.T) {
 	}
 }
 
+func TestResolvePermissionDriftInfersFrameworkTargetsWhenPolicyOmitsTargets(t *testing.T) {
+	t.Parallel()
+
+	appDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(appDir, "artisan"), []byte("#!/usr/bin/env php\n"), 0o755); err != nil {
+		t.Fatalf("write artisan marker: %v", err)
+	}
+	writeJSONFile(t, filepath.Join(appDir, "composer.json"), map[string]any{
+		"require": map[string]any{"laravel/framework": "^11.0"},
+	})
+	logDir := filepath.Join(appDir, "storage", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	if err := os.Chmod(logDir, 0o555); err != nil {
+		t.Fatalf("chmod log dir: %v", err)
+	}
+	policyPath := filepath.Join(appDir, "policy.json")
+	writeJSONFile(t, policyPath, map[string]any{
+		"lane":           "permission-drift",
+		"expected_owner": "app",
+		"expected_group": "app",
+		"verification": map[string]any{
+			"method":          "http",
+			"expected_status": http.StatusOK,
+			"body_contains":   "FIXED",
+		},
+	})
+	tracePath := filepath.Join(appDir, "trace.log")
+	if err := os.WriteFile(tracePath, []byte("permission drift: storage/logs/audit.log: permission denied\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := os.WriteFile(filepath.Join(logDir, "audit.log"), []byte("ok\n"), 0o644); err != nil {
+			http.Error(writer, "permission drift: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = writer.Write([]byte(`{"status":"FIXED"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := readinessresolve.Resolve(context.Background(), readinessresolve.CandidateInput{
+		ScenarioID:          "permission-drift-laravel-inferred",
+		OperationalLane:     "permission-drift",
+		ServiceName:         "permission-drift-laravel-inferred",
+		AppDir:              appDir,
+		PolicyFile:          policyPath,
+		TraceFile:           tracePath,
+		LiveProbeURL:        server.URL + "/orders/readiness",
+		ExpectedFixedStatus: http.StatusOK,
+		FixedBodyContains:   "FIXED",
+	})
+	if err != nil {
+		t.Fatalf("resolve inferred permission drift: %v", err)
+	}
+	if response.Status != readinessresolve.StatusResolved || !response.Supported {
+		t.Fatalf("expected resolved inferred permission response, got %+v", response)
+	}
+	if got := modePerm(t, logDir); got != 0o775 {
+		t.Fatalf("expected inferred Laravel storage/logs repair to set 0775, got %04o", got)
+	}
+	if response.RollbackPath == "" {
+		t.Fatalf("expected inferred repair rollback path, got %+v", response)
+	}
+	var logChange *readinessresolve.PermissionChange
+	for index := range response.PermissionChanges {
+		if response.PermissionChanges[index].Path == "storage/logs" {
+			logChange = &response.PermissionChanges[index]
+			break
+		}
+	}
+	if logChange == nil {
+		t.Fatalf("expected inferred storage/logs permission change, got %+v", response.PermissionChanges)
+	}
+	if logChange.Action != "repair_dir_permissions" || logChange.BeforeMode != "0555" || logChange.AfterMode != "0775" {
+		t.Fatalf("expected exact inferred storage/logs repair receipt, got %+v", logChange)
+	}
+}
+
 func TestResolvePermissionDriftCreatesMissingAllowlistedPath(t *testing.T) {
 	t.Parallel()
 
@@ -838,4 +918,13 @@ func readJSONFile(t *testing.T, path string) map[string]any {
 		t.Fatalf("decode %s: %v", path, err)
 	}
 	return value
+}
+
+func modePerm(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Mode().Perm()
 }

@@ -54,6 +54,11 @@ type Result struct {
 	RollbackPath         string                           `json:"rollback_path,omitempty"`
 }
 
+type InferredPolicy struct {
+	Framework string           `json:"framework"`
+	Policy    PermissionPolicy `json:"policy"`
+}
+
 type PermissionPolicy struct {
 	Framework       string            `json:"framework"`
 	Name            string            `json:"name"`
@@ -116,6 +121,29 @@ type rollbackEntry struct {
 	RelativePath string      `json:"relative_path"`
 	Exists       bool        `json:"exists"`
 	Mode         os.FileMode `json:"mode"`
+}
+
+func InferPolicy(options Options) (InferredPolicy, error) {
+	options = normalizeOptions(options)
+	if strings.TrimSpace(options.TargetDir) == "" {
+		return InferredPolicy{}, errors.New("target directory is required")
+	}
+
+	targetDir, err := filepath.Abs(filepath.Clean(options.TargetDir))
+	if err != nil {
+		return InferredPolicy{}, fmt.Errorf("resolve target directory: %w", err)
+	}
+	options.TargetDir = targetDir
+
+	framework, err := resolveFramework(options)
+	if err != nil {
+		return InferredPolicy{}, fmt.Errorf("framework detection failed: %w", err)
+	}
+	policy, err := policyForFramework(framework)
+	if err != nil {
+		return InferredPolicy{}, err
+	}
+	return InferredPolicy{Framework: framework, Policy: policy}, nil
 }
 
 func Run(ctx context.Context, options Options) (Result, error) {

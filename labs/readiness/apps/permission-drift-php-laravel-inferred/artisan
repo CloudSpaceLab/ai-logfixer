@@ -1,0 +1,4 @@
+#!/usr/bin/env php
+<?php
+
+echo "AI LogFixer readiness lab Laravel marker\n";

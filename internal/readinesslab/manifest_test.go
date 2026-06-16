@@ -322,6 +322,8 @@ func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 			t.Fatalf("read policy %s: %v", policyPath, err)
 		}
 		var policy struct {
+			Framework         string   `json:"framework"`
+			AllowedPaths      []string `json:"allowed_paths"`
 			PermissionTargets []struct {
 				Path         string `json:"path"`
 				Kind         string `json:"kind"`
@@ -331,6 +333,15 @@ func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 		}
 		if err := json.Unmarshal(raw, &policy); err != nil {
 			t.Fatalf("decode policy %s: %v", policyPath, err)
+		}
+		if len(policy.PermissionTargets) == 0 {
+			if strings.TrimSpace(policy.Framework) == "" {
+				t.Fatalf("%s targetless permission policy must declare framework inference", filepath.Base(policyPath))
+			}
+			if len(policy.AllowedPaths) > 0 {
+				t.Fatalf("%s must not mix allowed_paths with targetless framework inference", filepath.Base(policyPath))
+			}
+			continue
 		}
 		var hasReadableFile, hasWritableFile bool
 		for _, target := range policy.PermissionTargets {
@@ -367,6 +378,8 @@ func TestDockerLabScriptGeneratesFileLevelPermissionVariants(t *testing.T) {
 	requiredSnippets := []string{
 		"permission_targets",
 		"file-unreadable|file-unwritable)",
+		"file_targets = [",
+		"if not file_targets:",
 		"target.get(\"kind\") == \"file\"",
 		"target.get(\"access\") == \"read\"",
 		"commands.append(\"chmod 0000 \" + shlex.quote(path_for(target)))",
