@@ -274,7 +274,7 @@ def variant_commands(policy, targets):
 for scenario in manifest["scenarios"]:
     if scenario["operational_lane"] != "permission-drift":
         continue
-    if scenario.get("unsafe_fixture"):
+    if scenario.get("unsafe_fixture") or scenario.get("skip_permission_variants"):
         continue
     policy = json.loads((lab_root / scenario["policy_file"]).read_text())
     commands = variant_commands(policy, permission_targets(policy, scenario))
