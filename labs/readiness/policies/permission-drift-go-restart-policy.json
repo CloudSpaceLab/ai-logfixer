@@ -1,0 +1,46 @@
+{
+  "lane": "permission-drift",
+  "allowed_paths": [
+    "data"
+  ],
+  "permission_targets": [
+    {
+      "path": "data",
+      "kind": "dir",
+      "access": "write",
+      "expected_owner": "root",
+      "expected_group": "app",
+      "expected_mode": "0775"
+    },
+    {
+      "path": "data/readiness.json",
+      "kind": "file",
+      "access": "read",
+      "expected_mode": "0644"
+    },
+    {
+      "path": "data/startup.lock",
+      "kind": "file",
+      "access": "write",
+      "expected_owner": "root",
+      "expected_group": "app",
+      "expected_mode": "0664"
+    }
+  ],
+  "expected_owner": "app",
+  "expected_group": "app",
+  "expected_mode": "0775",
+  "allowed_restart_targets": [
+    "permission-drift-go-restart"
+  ],
+  "forbidden_actions": [
+    "chmod_777",
+    "recursive_root_change_outside_allowlist"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18092/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}

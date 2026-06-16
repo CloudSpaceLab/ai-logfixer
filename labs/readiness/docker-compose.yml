@@ -35,6 +35,11 @@ services:
     ports:
       - "18083:8080"
 
+  permission-drift-go-restart:
+    build: ./apps/permission-drift-go-restart
+    ports:
+      - "18092:8080"
+
   permission-drift-node-express:
     build: ./apps/permission-drift-node-express
     ports:

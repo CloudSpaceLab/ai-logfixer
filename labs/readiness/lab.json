@@ -55,6 +55,21 @@
       "safe_action": "repair allowlisted path owner and mode only"
     },
     {
+      "id": "permission-drift-go-restart",
+      "operational_lane": "permission-drift",
+      "runtime": "go",
+      "app_carrier": "net-http",
+      "service_name": "permission-drift-go-restart",
+      "docker_service": "permission-drift-go-restart",
+      "app_dir": "apps/permission-drift-go-restart",
+      "policy_file": "policies/permission-drift-go-restart-policy.json",
+      "live_probe_url": "http://127.0.0.1:18092/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "safe_action": "repair allowlisted permissions, restart the bounded service, and verify recovery"
+    },
+    {
       "id": "permission-drift-node-express",
       "operational_lane": "permission-drift",
       "runtime": "node",
