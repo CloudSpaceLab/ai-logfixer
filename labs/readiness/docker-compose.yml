@@ -55,6 +55,11 @@ services:
     ports:
       - "18090:8080"
 
+  permission-drift-php-laravel-artifacts:
+    build: ./apps/permission-drift-php-laravel-artifacts
+    ports:
+      - "18091:8080"
+
   permission-drift-ruby-lightweight:
     build: ./apps/permission-drift-ruby-lightweight
     ports:

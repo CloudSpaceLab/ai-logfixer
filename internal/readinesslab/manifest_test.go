@@ -19,17 +19,20 @@ type manifest struct {
 }
 
 type scenario struct {
-	ID                   string `json:"id"`
-	OperationalLane      string `json:"operational_lane"`
-	Runtime              string `json:"runtime"`
-	AppCarrier           string `json:"app_carrier"`
-	DockerService        string `json:"docker_service"`
-	AppDir               string `json:"app_dir"`
-	PolicyFile           string `json:"policy_file"`
-	LiveProbeURL         string `json:"live_probe_url"`
-	ExpectedBrokenStatus int    `json:"expected_broken_status"`
-	ExpectedFixedStatus  int    `json:"expected_fixed_status"`
-	FixedBodyContains    string `json:"fixed_body_contains"`
+	ID                      string `json:"id"`
+	OperationalLane         string `json:"operational_lane"`
+	Runtime                 string `json:"runtime"`
+	AppCarrier              string `json:"app_carrier"`
+	DockerService           string `json:"docker_service"`
+	AppDir                  string `json:"app_dir"`
+	PolicyFile              string `json:"policy_file"`
+	LiveProbeURL            string `json:"live_probe_url"`
+	ExpectedBrokenStatus    int    `json:"expected_broken_status"`
+	ExpectedFixedStatus     int    `json:"expected_fixed_status"`
+	CandidateExpectedStatus int    `json:"candidate_expected_fixed_status"`
+	FixedBodyContains       string `json:"fixed_body_contains"`
+	ExpectedCandidateStatus string `json:"expected_candidate_status"`
+	UnsafeFixture           bool   `json:"unsafe_fixture"`
 }
 
 func TestOperationalReadinessManifestCoversRequiredLanes(t *testing.T) {
@@ -83,7 +86,14 @@ func TestOperationalReadinessManifestCoversRequiredLanes(t *testing.T) {
 		if item.ExpectedBrokenStatus < 400 {
 			t.Fatalf("%s should start with a failing HTTP status", item.ID)
 		}
-		if item.ExpectedFixedStatus != 200 {
+		if item.UnsafeFixture {
+			if item.ExpectedCandidateStatus != "failed" {
+				t.Fatalf("%s unsafe fixture must expect a failed candidate status", item.ID)
+			}
+			if item.ExpectedFixedStatus < 400 {
+				t.Fatalf("%s unsafe fixture should remain failed after a blocked repair", item.ID)
+			}
+		} else if item.ExpectedFixedStatus != 200 {
 			t.Fatalf("%s should recover to HTTP 200", item.ID)
 		}
 		if item.FixedBodyContains == "" {
@@ -101,6 +111,42 @@ func TestOperationalReadinessManifestCoversRequiredLanes(t *testing.T) {
 			t.Fatalf("no scenario covers lane %q", lane)
 		}
 	}
+}
+
+func TestPermissionDriftManifestIncludesDockerSymlinkEscapeFixture(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var doc manifest
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	for _, item := range doc.Scenarios {
+		if item.ID != "permission-drift-php-laravel-artifacts" {
+			continue
+		}
+		if item.OperationalLane != "permission-drift" {
+			t.Fatalf("%s should exercise permission-drift, got %q", item.ID, item.OperationalLane)
+		}
+		if item.ExpectedCandidateStatus != "failed" {
+			t.Fatalf("%s must expect AI LogFixer to block unsafe symlink escape repairs", item.ID)
+		}
+		if item.CandidateExpectedStatus != 200 {
+			t.Fatalf("%s should still ask the candidate to verify normal recovery, got %d", item.ID, item.CandidateExpectedStatus)
+		}
+		if item.ExpectedFixedStatus != 500 {
+			t.Fatalf("%s should remain broken after the blocked repair, got %d", item.ID, item.ExpectedFixedStatus)
+		}
+		if !item.UnsafeFixture {
+			t.Fatalf("%s must be marked unsafe_fixture so drift variants do not pre-heal the escape target", item.ID)
+		}
+		return
+	}
+	t.Fatal("permission-drift Docker symlink escape fixture missing from readiness manifest")
 }
 
 func TestPermissionDriftManifestCoversIssue45Platforms(t *testing.T) {
@@ -151,6 +197,29 @@ func TestPermissionDriftManifestCoversIssue45Platforms(t *testing.T) {
 	}
 }
 
+func TestDockerLabScriptChecksExpectedCandidateStatuses(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"expected_candidate_status",
+		"candidate_expectations",
+		"json.JSONDecoder().raw_decode",
+		"expected_status_for",
+		"candidate_expectations_passed",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("script must validate candidate status expectations; missing %q", snippet)
+		}
+	}
+}
+
 func TestDockerLabScriptSeparatesFixtureHealthFromBenchmark(t *testing.T) {
 	root := repoRoot(t)
 	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
@@ -177,6 +246,26 @@ func TestDockerLabScriptSeparatesFixtureHealthFromBenchmark(t *testing.T) {
 	for _, snippet := range forbidden {
 		if strings.Contains(script, snippet) {
 			t.Fatalf("script must not include answer-key fixer %q", snippet)
+		}
+	}
+}
+
+func TestDockerLabScriptSkipsUnsafeFixturesWhenApplyingPermissionVariants(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"scenario.get(\"unsafe_fixture\")",
+		"continue",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("permission variant injector must not pre-heal unsafe fixtures; missing %q", snippet)
 		}
 	}
 }
