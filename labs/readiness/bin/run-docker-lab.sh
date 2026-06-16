@@ -141,7 +141,7 @@ apply_permission_drift_variant() {
     ""|mode-strict)
       return 0
       ;;
-    missing|parent-no-exec|owner-root|file-unreadable|file-unwritable)
+    missing|parent-no-exec|owner-root|group-root|file-unreadable|file-unwritable)
       ;;
     *)
       echo "invalid AI_LOGFIXER_PERMISSION_DRIFT_VARIANT: $permission_drift_variant" >&2
@@ -227,6 +227,20 @@ def variant_commands(policy, targets):
         for target in targets:
             container_path = path_for(target)
             mode = expected_mode(policy, target)
+            if target.get("kind") == "file":
+                commands.append("test -f " + shlex.quote(container_path))
+                commands.append("chown root:root " + shlex.quote(container_path))
+                commands.append("chmod " + shlex.quote(mode) + " " + shlex.quote(container_path))
+            else:
+                commands.append("mkdir -p " + shlex.quote(container_path))
+                commands.append("chown -R root:root " + shlex.quote(container_path))
+                commands.append("chmod " + shlex.quote(mode) + " " + shlex.quote(container_path))
+        return commands
+    if variant == "group-root":
+        for target in targets:
+            container_path = path_for(target)
+            mode = expected_mode(policy, target)
+            expected_group = group(policy, target)
             if target.get("kind") == "file":
                 commands.append("test -f " + shlex.quote(container_path))
                 commands.append("chown root:root " + shlex.quote(container_path))

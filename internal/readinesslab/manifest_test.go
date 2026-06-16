@@ -221,6 +221,8 @@ func TestDockerLabScriptSupportsPermissionDriftVariants(t *testing.T) {
 		"chmod 0666",
 		"owner-root",
 		"chown -R root:root",
+		"group-root",
+		"chown -R root:",
 		"file-unreadable",
 		"file-unwritable",
 	}
@@ -366,6 +368,41 @@ func TestPermissionDriftPoliciesDeclareFileTargets(t *testing.T) {
 	}
 }
 
+func TestPermissionDriftPoliciesCoverGroupWritableRuntimeTarget(t *testing.T) {
+	root := repoRoot(t)
+	policies, err := filepath.Glob(filepath.Join(root, "labs", "readiness", "policies", "permission-drift-*-policy.json"))
+	if err != nil {
+		t.Fatalf("glob permission policies: %v", err)
+	}
+	if len(policies) == 0 {
+		t.Fatal("expected permission-drift policies")
+	}
+
+	for _, policyPath := range policies {
+		raw, err := os.ReadFile(policyPath)
+		if err != nil {
+			t.Fatalf("read policy %s: %v", policyPath, err)
+		}
+		var policy struct {
+			PermissionTargets []struct {
+				Path          string `json:"path"`
+				ExpectedOwner string `json:"expected_owner"`
+				ExpectedGroup string `json:"expected_group"`
+				ExpectedMode  string `json:"expected_mode"`
+			} `json:"permission_targets"`
+		}
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			t.Fatalf("decode policy %s: %v", policyPath, err)
+		}
+		for _, target := range policy.PermissionTargets {
+			if target.ExpectedOwner == "root" && target.ExpectedGroup == "app" && (strings.HasSuffix(target.ExpectedMode, "775") || strings.HasSuffix(target.ExpectedMode, "664")) {
+				return
+			}
+		}
+	}
+	t.Fatal("permission drift policies must include at least one runtime target whose access depends on group ownership")
+}
+
 func TestDockerLabScriptGeneratesFileLevelPermissionVariants(t *testing.T) {
 	root := repoRoot(t)
 	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
@@ -389,6 +426,28 @@ func TestDockerLabScriptGeneratesFileLevelPermissionVariants(t *testing.T) {
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(script, snippet) {
 			t.Fatalf("file-level permission variants missing snippet %q", snippet)
+		}
+	}
+}
+
+func TestDockerLabScriptGeneratesGroupRootWithExpectedModeForEachPermissionScenario(t *testing.T) {
+	root := repoRoot(t)
+	scriptPath := filepath.Join(root, "labs", "readiness", "bin", "run-docker-lab.sh")
+	raw, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read docker lab script: %v", err)
+	}
+	script := string(raw)
+
+	requiredSnippets := []string{
+		"if variant == \"group-root\":",
+		"expected_group = group(policy, target)",
+		"chown -R root:root \" + shlex.quote(container_path)",
+		"chmod \" + shlex.quote(mode) + \" \" + shlex.quote(container_path)",
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(script, snippet) {
+			t.Fatalf("group-root variant must set wrong group while preserving expected mode; missing %q", snippet)
 		}
 	}
 }
@@ -492,6 +551,31 @@ func TestPermissionEnduranceRunnerAcceptsOwnerRootVariant(t *testing.T) {
 	}
 	if strings.Contains(string(output), "unsupported permission-drift variants") {
 		t.Fatalf("owner-root must be an accepted permission variant:\n%s", string(output))
+	}
+	if !strings.Contains(string(output), `"cycles": 1`) {
+		t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))
+	}
+}
+
+func TestPermissionEnduranceRunnerAcceptsGroupRootVariant(t *testing.T) {
+	root := repoRoot(t)
+	runnerPath := filepath.Join(root, "labs", "readiness", "bin", "run-permission-endurance.py")
+	artifacts := filepath.Join(t.TempDir(), "permission-endurance")
+	command := exec.Command(
+		"python3",
+		runnerPath,
+		"--candidate-command", "true",
+		"--cycles", "1",
+		"--variants", "group-root",
+		"--artifacts", artifacts,
+		"--lab-script", "true",
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected stubbed lab run to fail readiness, got success:\n%s", string(output))
+	}
+	if strings.Contains(string(output), "unsupported permission-drift variants") {
+		t.Fatalf("group-root must be an accepted permission variant:\n%s", string(output))
 	}
 	if !strings.Contains(string(output), `"cycles": 1`) {
 		t.Fatalf("expected runner to execute one stubbed cycle, got:\n%s", string(output))

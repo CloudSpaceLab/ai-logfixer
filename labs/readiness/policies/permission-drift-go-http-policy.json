@@ -8,6 +8,8 @@
       "path": "data",
       "kind": "dir",
       "access": "write",
+      "expected_owner": "root",
+      "expected_group": "app",
       "expected_mode": "0775"
     },
     {
@@ -20,6 +22,8 @@
       "path": "data/app.sqlite",
       "kind": "file",
       "access": "write",
+      "expected_owner": "root",
+      "expected_group": "app",
       "expected_mode": "0664"
     }
   ],
