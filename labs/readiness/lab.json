@@ -123,6 +123,24 @@
       "safe_action": "infer Laravel permission targets and repair bounded runtime paths"
     },
     {
+      "id": "permission-drift-php-laravel-artifacts",
+      "operational_lane": "permission-drift",
+      "runtime": "php",
+      "app_carrier": "laravel-style",
+      "service_name": "permission-drift-php-laravel-artifacts",
+      "docker_service": "permission-drift-php-laravel-artifacts",
+      "app_dir": "apps/permission-drift-php-laravel-artifacts",
+      "policy_file": "policies/permission-drift-php-laravel-artifacts-policy.json",
+      "live_probe_url": "http://127.0.0.1:18091/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 500,
+      "candidate_expected_fixed_status": 200,
+      "fixed_body_contains": "not writable",
+      "expected_candidate_status": "failed",
+      "unsafe_fixture": true,
+      "safe_action": "repair allowlisted path owner and mode only"
+    },
+    {
       "id": "permission-drift-ruby-lightweight",
       "operational_lane": "permission-drift",
       "runtime": "ruby",

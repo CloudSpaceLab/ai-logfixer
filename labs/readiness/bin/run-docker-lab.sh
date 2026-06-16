@@ -274,6 +274,8 @@ def variant_commands(policy, targets):
 for scenario in manifest["scenarios"]:
     if scenario["operational_lane"] != "permission-drift":
         continue
+    if scenario.get("unsafe_fixture"):
+        continue
     policy = json.loads((lab_root / scenario["policy_file"]).read_text())
     commands = variant_commands(policy, permission_targets(policy, scenario))
     if commands:
@@ -469,6 +471,7 @@ def strip_compose_prefix(raw):
 for scenario in manifest["scenarios"]:
     app_dir = str((lab_root / scenario["app_dir"]).resolve())
     policy_file = str((lab_root / scenario["policy_file"]).resolve())
+    candidate_expected_fixed_status = scenario.get("candidate_expected_fixed_status", scenario["expected_fixed_status"])
     raw_log = (logs_dir / f"{scenario['id']}.log").read_text()
     trace_file = trace_dir / f"{scenario['id']}.log"
     trace_file.write_text(strip_compose_prefix(raw_log))
@@ -486,7 +489,7 @@ for scenario in manifest["scenarios"]:
         "compose_file": compose_file,
         "compose_project": compose_project,
         "live_probe_url": scenario["live_probe_url"],
-        "expected_fixed_status": scenario["expected_fixed_status"],
+        "expected_fixed_status": candidate_expected_fixed_status,
         "fixed_body_contains": scenario["fixed_body_contains"],
         "safe_action": scenario["safe_action"],
     }
@@ -514,6 +517,54 @@ candidate_results = [
     for line in candidate_path.read_text().splitlines()
     if line.strip()
 ] if candidate_path.exists() else []
+candidate_by_scenario = {
+    item.get("scenario_id"): item
+    for item in candidate_results
+    if item.get("scenario_id")
+}
+
+def parse_candidate_status(result):
+    log_path = Path(result.get("log", ""))
+    if not log_path.exists():
+        return "", f"candidate log not found: {log_path}"
+    raw = log_path.read_text()
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(raw.lstrip())
+    except json.JSONDecodeError as err:
+        return "", f"candidate log did not start with JSON: {err}"
+    return str(payload.get("status", "")), ""
+
+def expected_status_for(scenario):
+    expected = str(scenario.get("expected_candidate_status", "")).strip()
+    if expected:
+        return expected
+    if scenario.get("expected_fixed_status") == 200:
+        return "resolved"
+    return ""
+
+candidate_expectations = []
+if report_mode == "benchmark":
+    for scenario in manifest["scenarios"]:
+        expected_status = expected_status_for(scenario)
+        if not expected_status:
+            continue
+        result = candidate_by_scenario.get(scenario["id"])
+        actual_status = ""
+        error = ""
+        if result is None:
+            error = "candidate result missing"
+        elif not result.get("configured"):
+            error = "candidate command not configured"
+        else:
+            actual_status, error = parse_candidate_status(result)
+        candidate_expectations.append({
+            "scenario_id": scenario["id"],
+            "expected_status": expected_status,
+            "actual_status": actual_status,
+            "passed": actual_status == expected_status and error == "",
+            "error": error,
+        })
+candidate_expectations_passed = sum(1 for item in candidate_expectations if item["passed"])
 
 if report_mode == "fixture-health":
     passed = broken["passed"]
@@ -522,7 +573,7 @@ if report_mode == "fixture-health":
 else:
     passed = fixed["passed"] if fixed else 0
     total = fixed["total"] if fixed else len(manifest["scenarios"])
-    ready = passed == total
+    ready = passed == total and candidate_expectations_passed == len(candidate_expectations)
 
 lanes = {}
 source = fixed if report_mode == "benchmark" and fixed else broken
@@ -535,7 +586,7 @@ for result in source["results"]:
 
 report = {
     "schema_version": "operational-drift-readiness-report/v1",
-    "issue_refs": [25, 45],
+    "issue_refs": [25, 45, 53],
     "focus": "multi-platform permission drift black-box regression",
     "lane_filter": manifest.get("lane_filter", ""),
     "permission_drift_variant": sys.argv[7],
@@ -547,6 +598,8 @@ report = {
         "total": total,
         "pass_rate": passed / total if total else 0,
         "candidate_configured": any(item.get("configured") for item in candidate_results),
+        "candidate_expectations_passed": candidate_expectations_passed,
+        "candidate_expectations_total": len(candidate_expectations),
     },
     "lane_summary": lanes,
     "scenario_matrix": [
@@ -556,12 +609,15 @@ report = {
             "runtime": scenario["runtime"],
             "app_carrier": scenario["app_carrier"],
             "safe_action": scenario["safe_action"],
+            "expected_candidate_status": expected_status_for(scenario),
+            "unsafe_fixture": bool(scenario.get("unsafe_fixture")),
         }
         for scenario in manifest["scenarios"]
     ],
     "broken_probe": broken,
     "fixed_probe": fixed,
     "candidate_results": candidate_results,
+    "candidate_expectations": candidate_expectations,
 }
 output.write_text(json.dumps(report, indent=2))
 print(json.dumps(report["summary"], indent=2))

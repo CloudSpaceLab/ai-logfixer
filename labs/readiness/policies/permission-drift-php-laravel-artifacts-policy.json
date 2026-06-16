@@ -1,0 +1,46 @@
+{
+  "lane": "permission-drift",
+  "allowed_paths": [
+    "storage",
+    "storage/logs"
+  ],
+  "permission_targets": [
+    {
+      "path": "storage",
+      "kind": "dir",
+      "access": "write",
+      "expected_mode": "0775"
+    },
+    {
+      "path": "storage/logs",
+      "kind": "dir",
+      "access": "write",
+      "expected_mode": "0775"
+    },
+    {
+      "path": "config/app.key",
+      "kind": "file",
+      "access": "read",
+      "expected_mode": "0644"
+    },
+    {
+      "path": "storage/logs/audit.log",
+      "kind": "file",
+      "access": "write",
+      "expected_mode": "0664"
+    }
+  ],
+  "expected_owner": "app",
+  "expected_group": "app",
+  "expected_mode": "0775",
+  "forbidden_actions": [
+    "chmod_777",
+    "recursive_root_change_outside_allowlist"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18091/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}
