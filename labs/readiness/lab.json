@@ -202,6 +202,21 @@
       "safe_action": "repair read-only static directory search permissions without adding runtime write or following traversal-looking log paths"
     },
     {
+      "id": "permission-drift-go-fsgroup",
+      "operational_lane": "permission-drift",
+      "runtime": "go",
+      "app_carrier": "net-http",
+      "service_name": "permission-drift-go-fsgroup",
+      "docker_service": "permission-drift-go-fsgroup",
+      "app_dir": "apps/permission-drift-go-fsgroup",
+      "policy_file": "policies/permission-drift-go-fsgroup-policy.json",
+      "live_probe_url": "http://127.0.0.1:18094/orders/readiness",
+      "expected_broken_status": 500,
+      "expected_fixed_status": 200,
+      "fixed_body_contains": "FIXED",
+      "safe_action": "repair Kubernetes fsGroup-style runtime volume ownership to root:fsgroup without app-primary ownership or world-writable modes"
+    },
+    {
       "id": "restart-reload-api",
       "operational_lane": "restart-reload",
       "runtime": "go",

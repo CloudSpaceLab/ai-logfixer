@@ -80,6 +80,11 @@ services:
     ports:
       - "18093:8080"
 
+  permission-drift-go-fsgroup:
+    build: ./apps/permission-drift-go-fsgroup
+    ports:
+      - "18094:8080"
+
   restart-reload-api:
     build: ./apps/restart-reload-api
     ports:

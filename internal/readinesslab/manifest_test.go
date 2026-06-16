@@ -34,6 +34,7 @@ type scenario struct {
 	ExpectedCandidateStatus string `json:"expected_candidate_status"`
 	UnsafeFixture           bool   `json:"unsafe_fixture"`
 	SkipPermissionVariants  bool   `json:"skip_permission_variants"`
+	SafeAction              string `json:"safe_action"`
 }
 
 func TestOperationalReadinessManifestCoversRequiredLanes(t *testing.T) {
@@ -247,6 +248,83 @@ func TestPermissionDriftManifestIncludesStaticTraversalNegativeFixture(t *testin
 		t.Fatalf("%s policy missing public static directory target", item.ID)
 	}
 	t.Fatal("permission-drift static traversal negative fixture missing from readiness manifest")
+}
+
+func TestPermissionDriftManifestIncludesKubernetesFsGroupFixture(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", "lab.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var doc manifest
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	for _, item := range doc.Scenarios {
+		if item.ID != "permission-drift-go-fsgroup" {
+			continue
+		}
+		if item.OperationalLane != "permission-drift" || item.Runtime != "go" {
+			t.Fatalf("%s should cover Go permission-drift fsGroup behavior, got lane=%q runtime=%q", item.ID, item.OperationalLane, item.Runtime)
+		}
+		if !strings.Contains(item.SafeAction, "fsGroup") {
+			t.Fatalf("%s safe action should document Kubernetes fsGroup-style repair intent", item.ID)
+		}
+
+		policyRaw, err := os.ReadFile(filepath.Join(root, "labs", "readiness", item.PolicyFile))
+		if err != nil {
+			t.Fatalf("read fsGroup permission policy: %v", err)
+		}
+		var policy struct {
+			KubernetesSecurityContext struct {
+				RunAsUser  int `json:"run_as_user"`
+				RunAsGroup int `json:"run_as_group"`
+				FsGroup    int `json:"fs_group"`
+			} `json:"kubernetes_security_context"`
+			PermissionTargets []struct {
+				Path          string `json:"path"`
+				Kind          string `json:"kind"`
+				Access        string `json:"access"`
+				ExpectedOwner string `json:"expected_owner"`
+				ExpectedGroup string `json:"expected_group"`
+				ExpectedMode  string `json:"expected_mode"`
+			} `json:"permission_targets"`
+		}
+		if err := json.Unmarshal(policyRaw, &policy); err != nil {
+			t.Fatalf("decode fsGroup permission policy: %v", err)
+		}
+		if policy.KubernetesSecurityContext.RunAsUser != 10001 || policy.KubernetesSecurityContext.RunAsGroup != 10001 || policy.KubernetesSecurityContext.FsGroup != 20001 {
+			t.Fatalf("fsGroup fixture should declare runAsUser=10001 runAsGroup=10001 fsGroup=20001, got %+v", policy.KubernetesSecurityContext)
+		}
+
+		requiredTargets := map[string]struct {
+			kind string
+			mode string
+		}{
+			"volume":            {kind: "dir", mode: "0770"},
+			"volume/events.log": {kind: "file", mode: "0660"},
+		}
+		for _, target := range policy.PermissionTargets {
+			required, ok := requiredTargets[target.Path]
+			if !ok {
+				continue
+			}
+			if target.Kind != required.kind || target.Access != "write" {
+				t.Fatalf("%s should be a writable %s target, got %+v", target.Path, required.kind, target)
+			}
+			if target.ExpectedOwner != "root" || target.ExpectedGroup != "fsgroup" || target.ExpectedMode != required.mode {
+				t.Fatalf("%s should repair to root:fsgroup %s, got %+v", target.Path, required.mode, target)
+			}
+			delete(requiredTargets, target.Path)
+		}
+		if len(requiredTargets) > 0 {
+			t.Fatalf("%s policy missing fsGroup targets: %+v", item.ID, requiredTargets)
+		}
+		return
+	}
+	t.Fatal("permission-drift Kubernetes fsGroup fixture missing from readiness manifest")
 }
 
 func TestPermissionDriftManifestCoversIssue45Platforms(t *testing.T) {

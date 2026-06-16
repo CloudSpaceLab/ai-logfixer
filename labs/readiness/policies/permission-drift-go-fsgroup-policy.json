@@ -1,0 +1,51 @@
+{
+  "lane": "permission-drift",
+  "allowed_paths": [
+    "volume"
+  ],
+  "kubernetes_security_context": {
+    "run_as_user": 10001,
+    "run_as_group": 10001,
+    "fs_group": 20001
+  },
+  "permission_targets": [
+    {
+      "path": "volume",
+      "kind": "dir",
+      "access": "write",
+      "expected_owner": "root",
+      "expected_group": "fsgroup",
+      "expected_mode": "0770"
+    },
+    {
+      "path": "volume/status.json",
+      "kind": "file",
+      "access": "read",
+      "expected_owner": "root",
+      "expected_group": "fsgroup",
+      "expected_mode": "0640"
+    },
+    {
+      "path": "volume/events.log",
+      "kind": "file",
+      "access": "write",
+      "expected_owner": "root",
+      "expected_group": "fsgroup",
+      "expected_mode": "0660"
+    }
+  ],
+  "expected_owner": "root",
+  "expected_group": "fsgroup",
+  "expected_mode": "0770",
+  "forbidden_actions": [
+    "chmod_777",
+    "recursive_root_change_outside_allowlist",
+    "chown_to_app_primary_group"
+  ],
+  "verification": {
+    "method": "http",
+    "url": "http://127.0.0.1:18094/orders/readiness",
+    "expected_status": 200,
+    "body_contains": "FIXED"
+  }
+}
