@@ -48,6 +48,34 @@ AILOGFIXER_POSTGRES_DSN='postgres://user:pass@127.0.0.1:5432/ai_logfixer_test?ss
 
 The GitHub Actions workflow runs the normal Go suite and a PostgreSQL-backed integration job on pull requests.
 
+## HTTP detector intake
+
+`cmd/ai-logfixer-detect` is the first runnable Phase 2 bridge from logs to durable investigation intake. It reads key-value HTTP logs, groups repeated failures, and emits the contract records that `internal/intake` would persist.
+
+Dry-run:
+
+```bash
+go run ./cmd/ai-logfixer-detect \
+  -log ./tmp/access.log \
+  -service checkout-api \
+  -route /checkout \
+  -status 503 \
+  -threshold 3
+```
+
+Durable mode requires existing tenant, environment, and service IDs in the PostgreSQL workflow store:
+
+```bash
+go run ./cmd/ai-logfixer-detect \
+  -persist=true \
+  -postgres-dsn "$AILOGFIXER_POSTGRES_DSN" \
+  -tenant-id "$TENANT_ID" \
+  -environment-id "$ENVIRONMENT_ID" \
+  -service-id "$SERVICE_ID" \
+  -log ./tmp/access.log \
+  -service checkout-api
+```
+
 ## Architecture direction
 
 The current repo is intentionally contract-first. Runtime work should now converge on a durable workflow architecture instead of growing as separate CLI-only flows.
@@ -60,10 +88,11 @@ The current repo is intentionally contract-first. Runtime work should now conver
 - [Phase 1 progress and architecture review](docs/reviews/phase-1-progress-and-architecture-review.md) maps the current codebase, open issues, PRs, biggest gaps, and recommended next step.
 - [Live scenario validation](docs/reviews/live-scenario-validation-2026-05-26.md) records real local Runtime V2/Goravel runs and evaluates public log/error corpora for future fixtures.
 - `internal/domain` centralizes allowed investigation, remediation, and approval state transitions.
-- `internal/store` defines the durable repository, lease, audit, and outbox boundary that future API/worker implementations should use.
+- `internal/store` defines the durable signal, workflow, lease, audit, and outbox boundary that future API/worker implementations should use.
 - `internal/store/postgres` is the first concrete SQL implementation for transaction-scoped contract records, optimistic status updates, workflow leases, audit events, and outbox delivery.
 - `internal/workflow` is the first service layer over the store: it owns status transitions and writes audit/outbox records in the same transaction.
 - `internal/engine` contains shared incident-signal grouping, dynamic contract ID generation, and blocked/escalated remediation helpers.
+- `internal/intake` turns normalized incident signals into durable signal event, fingerprint, investigation request, cluster, branch, and decision records with audit/outbox events.
 - `internal/runtime/v2` is the Runtime V2 conservative JSON-config remediation path: the demo app still uses `/orders` and `upstream_url`, but the reusable runner can match other routes/statuses, patch an explicit JSON key path, verify an explicit URL, and escalate safely when no allowlisted patch descriptor exists. It can also call `internal/workflow` when a workflow service is supplied.
 - `internal/runtime/permissions` is the Runtime V2 framework permission resolver. The first supported policy is Laravel writable runtime directories; it detects drift with stat/write-probe evidence, blocks unsafe paths, applies bounded `mkdir`/`chmod` repairs, writes rollback manifests, and verifies recovery.
 - `internal/truth` defines the Runtime V2 truth-recovery layer: stack trace resolution, suppression-site detection, staged reveal planning, redaction, and scoped fix-bundle creation for explicit opencode handoff.

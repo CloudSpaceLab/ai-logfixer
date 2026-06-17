@@ -604,6 +604,14 @@ type fakeWorkflowTx struct {
 	outbox           fakeOutboxRepository
 }
 
+func (t *fakeWorkflowTx) SignalEvents() store.SignalEventRepository {
+	return nil
+}
+
+func (t *fakeWorkflowTx) SignalFingerprints() store.SignalFingerprintRepository {
+	return nil
+}
+
 func (t *fakeWorkflowTx) InvestigationRequests() store.InvestigationRequestRepository {
 	return nil
 }
@@ -613,6 +621,10 @@ func (t *fakeWorkflowTx) InvestigationClusters() store.InvestigationClusterRepos
 }
 
 func (t *fakeWorkflowTx) InvestigationBranches() store.InvestigationBranchRepository {
+	return nil
+}
+
+func (t *fakeWorkflowTx) InvestigationDecisions() store.InvestigationDecisionRepository {
 	return nil
 }
 

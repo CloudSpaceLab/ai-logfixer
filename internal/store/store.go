@@ -20,9 +20,12 @@ type WorkflowStore interface {
 }
 
 type Tx interface {
+	SignalEvents() SignalEventRepository
+	SignalFingerprints() SignalFingerprintRepository
 	InvestigationRequests() InvestigationRequestRepository
 	InvestigationClusters() InvestigationClusterRepository
 	InvestigationBranches() InvestigationBranchRepository
+	InvestigationDecisions() InvestigationDecisionRepository
 	DiagnosisResults() DiagnosisResultRepository
 	RemediationPlans() RemediationPlanRepository
 	ApprovalRequests() ApprovalRequestRepository
@@ -31,6 +34,50 @@ type Tx interface {
 	AuditEvents() AuditEventRepository
 	WorkflowLeases() WorkflowLeaseRepository
 	OutboxEvents() OutboxEventRepository
+}
+
+type SignalEvent struct {
+	ID              string
+	TenantID        string
+	EnvironmentID   string
+	ServiceID       string
+	Source          string
+	Severity        string
+	Route           string
+	Method          string
+	StatusCode      int
+	ErrorClass      string
+	FingerprintHash string
+	IdempotencyKey  string
+	ObservedAt      time.Time
+	ReceivedAt      time.Time
+	PayloadJSON     json.RawMessage
+}
+
+type SignalFingerprint struct {
+	ID              string
+	TenantID        string
+	EnvironmentID   string
+	ServiceID       string
+	FingerprintHash string
+	Status          string
+	FirstSeenAt     time.Time
+	LastSeenAt      time.Time
+	OccurrenceCount int64
+	SampleEventID   string
+	MetadataJSON    json.RawMessage
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type SignalEventRepository interface {
+	Create(ctx context.Context, event SignalEvent) (SignalEvent, error)
+	Get(ctx context.Context, tenantID string, id string) (SignalEvent, error)
+}
+
+type SignalFingerprintRepository interface {
+	Upsert(ctx context.Context, fingerprint SignalFingerprint) (SignalFingerprint, error)
+	GetByHash(ctx context.Context, tenantID string, serviceID string, fingerprintHash string) (SignalFingerprint, error)
 }
 
 type ContractRecord[T any] struct {
@@ -76,6 +123,11 @@ type InvestigationBranchRepository interface {
 	Create(ctx context.Context, record ContractRecord[contractsv1.InvestigationBranch]) error
 	Get(ctx context.Context, tenantID string, id string) (ContractRecord[contractsv1.InvestigationBranch], error)
 	UpdateStatus(ctx context.Context, tenantID string, id string, from contractsv1.InvestigationStatus, to contractsv1.InvestigationStatus) error
+}
+
+type InvestigationDecisionRepository interface {
+	Create(ctx context.Context, record ContractRecord[contractsv1.InvestigationDecision]) error
+	Get(ctx context.Context, tenantID string, id string) (ContractRecord[contractsv1.InvestigationDecision], error)
 }
 
 type DiagnosisResultRepository interface {

@@ -72,7 +72,45 @@ VALUES ($1, $2, 'v1', $3, $4, $5, $6)`,
 		t.Fatalf("insert rollback plan: %v", err)
 	}
 
+	var signalEventID string
+	fingerprintHash := "sig-it-1"
 	if err := workflowStore.WithinTx(ctx, func(ctx context.Context, tx store.Tx) error {
+		signalEvent, err := tx.SignalEvents().Create(ctx, store.SignalEvent{
+			TenantID:        tenantID,
+			EnvironmentID:   environmentID,
+			ServiceID:       serviceID,
+			Source:          "integration-test",
+			Severity:        "error",
+			Route:           "/checkout",
+			Method:          "GET",
+			StatusCode:      500,
+			ErrorClass:      "500",
+			FingerprintHash: fingerprintHash,
+			IdempotencyKey:  "signal-event-it-1",
+			ObservedAt:      now.Add(-time.Minute),
+			ReceivedAt:      now,
+			PayloadJSON:     []byte(`{"status":500}`),
+		})
+		if err != nil {
+			return err
+		}
+		signalEventID = signalEvent.ID
+		if _, err := tx.SignalFingerprints().Upsert(ctx, store.SignalFingerprint{
+			TenantID:        tenantID,
+			EnvironmentID:   environmentID,
+			ServiceID:       serviceID,
+			FingerprintHash: fingerprintHash,
+			Status:          "open",
+			FirstSeenAt:     now.Add(-time.Minute),
+			LastSeenAt:      now,
+			OccurrenceCount: 3,
+			SampleEventID:   signalEvent.ID,
+			MetadataJSON:    []byte(`{"kind":"http_failure"}`),
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}); err != nil {
+			return err
+		}
 		if err := tx.InvestigationRequests().Create(ctx, store.ContractRecord[contractsv1.InvestigationRequest]{
 			TenantID:       tenantID,
 			EnvironmentID:  environmentID,
@@ -144,6 +182,29 @@ VALUES ($1, $2, 'v1', $3, $4, $5, $6)`,
 		}); err != nil {
 			return err
 		}
+		if err := tx.InvestigationDecisions().Create(ctx, store.ContractRecord[contractsv1.InvestigationDecision]{
+			TenantID: tenantID,
+			Status:   string(contractsv1.InvestigationDecisionStartNew),
+			Relations: store.ContractRelations{
+				RequestID: "req-it-1",
+				ClusterID: "cluster-it-1",
+				BranchID:  "branch-it-1",
+			},
+			Payload: contractsv1.InvestigationDecision{
+				ID:              "decision-it-1",
+				ContractVersion: contractsv1.ContractVersion,
+				SchemaURL:       contractsv1.InvestigationDecisionSchemaURL,
+				RequestID:       "req-it-1",
+				Decision:        contractsv1.InvestigationDecisionStartNew,
+				Explanation:     "Start a new integration-test investigation.",
+				UserMessage:     "Started a new investigation.",
+				ClusterID:       "cluster-it-1",
+				BranchID:        "branch-it-1",
+				CreatedAt:       now,
+			},
+		}); err != nil {
+			return err
+		}
 		if err := tx.DiagnosisResults().Create(ctx, store.ContractRecord[contractsv1.DiagnosisResult]{
 			TenantID:      tenantID,
 			EnvironmentID: environmentID,
@@ -205,6 +266,26 @@ VALUES ($1, $2, 'v1', $3, $4, $5, $6)`,
 		})
 	}); err != nil {
 		t.Fatalf("create workflow records: %v", err)
+	}
+
+	if err := workflowStore.WithinTx(ctx, func(ctx context.Context, tx store.Tx) error {
+		gotEvent, err := tx.SignalEvents().Get(ctx, tenantID, signalEventID)
+		if err != nil {
+			return err
+		}
+		if gotEvent.FingerprintHash != fingerprintHash || gotEvent.StatusCode != 500 {
+			return fmt.Errorf("unexpected signal event: %+v", gotEvent)
+		}
+		gotFingerprint, err := tx.SignalFingerprints().GetByHash(ctx, tenantID, serviceID, fingerprintHash)
+		if err != nil {
+			return err
+		}
+		if gotFingerprint.SampleEventID != signalEventID || gotFingerprint.OccurrenceCount != 3 {
+			return fmt.Errorf("unexpected signal fingerprint: %+v", gotFingerprint)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("get signal records: %v", err)
 	}
 
 	gotPlan := getRemediationPlan(t, ctx, workflowStore, tenantID, "plan-it-1")
