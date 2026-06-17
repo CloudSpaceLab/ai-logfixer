@@ -1,0 +1,44 @@
+{
+  "id": "receipt_route_policy_success_001",
+  "diagnosis_id": "diag_web_500_failed_migration_001",
+  "remediation_plan_id": "rem_plan_route_policy_001",
+  "remediation_attempt_id": "rem_attempt_route_policy_001",
+  "action_taken": "Restored /api/orders route policy to upstream-orders-v41 after approval.",
+  "actor": "ai-logfixer",
+  "approver": "ops-lead@example.invalid",
+  "timestamp": "2026-05-21T08:17:30Z",
+  "before_state": "route /api/orders -> upstream-orders-v42; http_503_rate=18%",
+  "after_state": "route /api/orders -> upstream-orders-v41; http_503_rate=0.2%",
+  "outcome": "succeeded",
+  "summary": "The approved route policy remediation succeeded and post-fix monitoring returned to baseline.",
+  "timeline_events": [
+    {
+      "id": "tl_receipt_success_001",
+      "type": "receipt.created",
+      "message": "Success receipt recorded after monitoring passed.",
+      "severity": "success",
+      "timestamp": "2026-05-21T08:17:30Z"
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "github",
+      "type": "issue",
+      "id": "INC-503",
+      "url": "https://github.com/CloudSpaceLab/ai-logfixer/issues/503",
+      "metadata": {
+        "receipt_type": "success"
+      }
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "route_policy_orders_v41",
+      "node_type": "route_policy",
+      "relationship": "restored",
+      "confidence": 0.93,
+      "source": "receipt"
+    }
+  ]
+}

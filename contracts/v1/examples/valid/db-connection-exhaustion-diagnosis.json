@@ -1,0 +1,160 @@
+{
+  "id": "diag_checkout_db_pool_exhaustion_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/diagnosis-result.schema.json",
+  "status": "complete",
+  "summary": "checkout-api requests are timing out because the service is exhausting its database connection pool.",
+  "confidence": 0.9,
+  "suspected_root_cause": "The application pool is saturated while the database still has capacity, indicating leaked or long-held application connections.",
+  "affected_services": ["checkout-api", "postgres-primary"],
+  "evidence_items": [
+    {
+      "id": "ev_checkout_pool_timeout_001",
+      "type": "log",
+      "source": "checkout-api/application.log",
+      "timestamp": "2026-05-21T09:00:00Z",
+      "title": "Database checkout timeout",
+      "summary": "Requests fail while waiting for an available database connection from the application pool.",
+      "raw_excerpt": "ERROR db timeout waiting for connection from pool after 5000ms",
+      "redaction_state": "not_needed",
+      "related_ids": ["ev_checkout_pool_metric_001"],
+      "ui_hints": {
+        "icon": "database",
+        "tone": "danger",
+        "sections": ["evidence", "logs"]
+      },
+      "external_refs": [],
+      "knowledge_refs": []
+    },
+    {
+      "id": "ev_checkout_pool_metric_001",
+      "type": "metric",
+      "source": "metrics/checkout-api/db_pool_in_use",
+      "timestamp": "2026-05-21T09:00:30Z",
+      "title": "Connection pool at limit",
+      "summary": "The pool reports 50 in-use connections and zero idle connections for five minutes.",
+      "raw_excerpt": "db_pool_in_use=50 db_pool_max=50 db_pool_idle=0",
+      "redaction_state": "not_needed",
+      "related_ids": ["ev_postgres_capacity_001"],
+      "ui_hints": {
+        "icon": "activity",
+        "tone": "warning",
+        "sections": ["evidence", "metrics"]
+      },
+      "external_refs": [],
+      "knowledge_refs": []
+    },
+    {
+      "id": "ev_postgres_capacity_001",
+      "type": "db",
+      "source": "postgres-primary/pg_stat_activity",
+      "timestamp": "2026-05-21T09:01:00Z",
+      "title": "Database still has headroom",
+      "summary": "The database is not at its global max connection limit, which points back to the application pool or connection lifecycle.",
+      "raw_excerpt": "active_sessions=61 max_connections=200 waiting_locks=0",
+      "redaction_state": "not_needed",
+      "related_ids": ["ev_checkout_pool_metric_001"],
+      "ui_hints": {
+        "icon": "server",
+        "tone": "neutral",
+        "sections": ["evidence", "db"]
+      },
+      "external_refs": [],
+      "knowledge_refs": []
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "rec_review_connection_lifecycle_001",
+      "title": "Inspect connection lifecycle before increasing limits",
+      "reason": "Raising max connections can mask leaks and pressure the database unless the application lifecycle is understood.",
+      "confidence": 0.86,
+      "steps": [
+        "Review recent changes touching transaction boundaries.",
+        "Check whether failed requests close rows and transactions.",
+        "Preview a conservative pool timeout and max idle adjustment if no code leak is found."
+      ],
+      "required_permissions": ["logs:read", "metrics:read", "config:write"],
+      "estimated_risk": "medium_risk",
+      "requires_approval": true
+    }
+  ],
+  "patch_plan": {
+    "id": "patch_checkout_pool_config_001",
+    "target_type": "config",
+    "target_refs": ["checkout-api/config/database.json"],
+    "diff_preview": {
+      "before": "{\"pool\":{\"max_open\":50,\"max_idle\":2,\"conn_max_lifetime\":\"0s\"}}",
+      "after": "{\"pool\":{\"max_open\":60,\"max_idle\":10,\"conn_max_lifetime\":\"15m\"}}"
+    },
+    "risk_level": "medium_risk",
+    "requires_approval": true,
+    "blocked_reasons": []
+  },
+  "rollback_plan": {
+    "id": "rollback_checkout_pool_config_001",
+    "rollback_type": "restore_config",
+    "snapshot_refs": ["config_snapshot_checkout_db_2026_05_21_085900"],
+    "restore_steps": [
+      "Restore checkout-api/config/database.json from snapshot.",
+      "Restart checkout-api.",
+      "Verify db_pool_in_use and HTTP 5xx rate return to the previous baseline."
+    ],
+    "limitations": [
+      "Rollback restores pool pressure if the underlying connection lifecycle is still faulty."
+    ],
+    "risk_level": "medium_risk",
+    "requires_manual_review": true
+  },
+  "safety_classification": "medium_risk",
+  "display_status": "Diagnosis complete",
+  "user_message": "I found evidence that checkout-api is saturating its database connection pool.",
+  "next_actions": [
+    {
+      "id": "next_review_pool_plan",
+      "label": "Review pool plan",
+      "action_type": "open_remediation_plan",
+      "description": "Review the guarded database pool remediation plan.",
+      "enabled": true
+    }
+  ],
+  "timeline_events": [
+    {
+      "id": "tl_db_diag_complete_001",
+      "type": "diagnosis.completed",
+      "message": "Database pool exhaustion diagnosis completed.",
+      "severity": "info",
+      "timestamp": "2026-05-21T09:02:00Z"
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "observability",
+      "type": "dashboard",
+      "id": "checkout-db-pool",
+      "url": "https://observability.example.invalid/d/checkout-db-pool",
+      "metadata": {
+        "fixture": "true"
+      }
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "service_checkout_api",
+      "node_type": "service",
+      "relationship": "uses",
+      "confidence": 0.9,
+      "source": "diagnosis"
+    },
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "db_postgres_primary",
+      "node_type": "database",
+      "relationship": "depends_on",
+      "confidence": 0.88,
+      "source": "diagnosis"
+    }
+  ],
+  "created_at": "2026-05-21T09:02:00Z"
+}

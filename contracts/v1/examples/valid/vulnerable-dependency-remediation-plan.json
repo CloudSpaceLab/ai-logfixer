@@ -1,0 +1,75 @@
+{
+  "id": "rem_plan_cve_dependency_upgrade_001",
+  "contract_version": "v1",
+  "schema_url": "https://github.com/CloudSpaceLab/ai-logfixer/contracts/v1/schemas/remediation-plan.schema.json",
+  "diagnosis_result_id": "diag_auth_cve_dependency_001",
+  "summary": "Upgrade the vulnerable auth middleware dependency to the vendor-patched version.",
+  "fix_preview": {
+    "before": "github.com/example/auth-middleware v1.4.2",
+    "after": "github.com/example/auth-middleware v1.4.5"
+  },
+  "rollback_plan": {
+    "id": "rollback_cve_dependency_001",
+    "rollback_type": "unavailable",
+    "snapshot_refs": [],
+    "restore_steps": [],
+    "limitations": [
+      "Rolling back would restore a dependency version affected by CVE-2026-4100.",
+      "A failed rollout should be handled by forward-fixing or traffic rollback to a previously patched build."
+    ],
+    "risk_level": "high_risk",
+    "requires_manual_review": true
+  },
+  "risk_level": "high_risk",
+  "approval_required": true,
+  "status": "awaiting_approval",
+  "display_status": "Security fix needs approval",
+  "user_message": "I found a dependency upgrade that addresses a known CVE. Approval is required because rollback to the vulnerable version is blocked.",
+  "next_actions": [
+    {
+      "id": "next_review_cve_diff",
+      "label": "Review upgrade",
+      "action_type": "open_dependency_diff",
+      "description": "Review the dependency diff and vendor advisory before approval.",
+      "enabled": true
+    },
+    {
+      "id": "next_request_approval",
+      "label": "Request approval",
+      "action_type": "request_remediation_approval",
+      "description": "Ask an authorized approver to approve the guarded dependency upgrade.",
+      "enabled": true
+    }
+  ],
+  "timeline_events": [
+    {
+      "id": "tl_cve_plan_created_001",
+      "type": "remediation.plan_created",
+      "message": "Dependency remediation plan created with rollback limitation.",
+      "severity": "warning",
+      "timestamp": "2026-05-21T10:00:00Z"
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "vendor-advisory",
+      "type": "security_advisory",
+      "id": "CVE-2026-4100",
+      "url": "https://advisories.example.invalid/CVE-2026-4100",
+      "metadata": {
+        "package": "github.com/example/auth-middleware"
+      }
+    }
+  ],
+  "knowledge_refs": [
+    {
+      "graph_id": "ai-logfixer-local",
+      "node_id": "dependency_auth_middleware",
+      "node_type": "dependency",
+      "relationship": "updates",
+      "confidence": 0.91,
+      "source": "security_scanner"
+    }
+  ],
+  "created_at": "2026-05-21T10:00:00Z"
+}

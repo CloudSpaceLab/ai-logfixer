@@ -174,6 +174,62 @@ func (d InvestigationDecision) Validate() error {
 	return errors.Join(errs...)
 }
 
+func (c InvestigationCluster) Validate() error {
+	var errs []error
+
+	require(&errs, c.ID != "", "id is required")
+	require(&errs, validInvestigationStatus(c.Status), fmt.Sprintf("unsupported status %q", c.Status))
+	require(&errs, c.PrimaryService != "", "primary_service is required")
+	require(&errs, c.Summary != "", "summary is required")
+	require(&errs, !c.CreatedAt.IsZero(), "created_at is required")
+	require(&errs, !c.UpdatedAt.IsZero(), "updated_at is required")
+	require(&errs, !c.UpdatedAt.Before(c.CreatedAt), "updated_at must be at or after created_at")
+
+	for index, branch := range c.ActiveBranches {
+		errs = append(errs, prefixErr(fmt.Sprintf("active_branches[%d]", index), branch.Validate())...)
+		require(&errs, branch.ClusterID == c.ID, fmt.Sprintf("active_branches[%d].cluster_id must match cluster id", index))
+	}
+	for index, branch := range c.QueuedBranches {
+		errs = append(errs, prefixErr(fmt.Sprintf("queued_branches[%d]", index), branch.Validate())...)
+		require(&errs, branch.ClusterID == c.ID, fmt.Sprintf("queued_branches[%d].cluster_id must match cluster id", index))
+	}
+	for index, event := range c.TimelineEvents {
+		errs = append(errs, prefixErr(fmt.Sprintf("timeline_events[%d]", index), event.Validate())...)
+	}
+	for index, ref := range c.ExternalRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("external_refs[%d]", index), ref.Validate())...)
+	}
+	for index, ref := range c.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
+	}
+
+	return errors.Join(errs...)
+}
+
+func (b InvestigationBranch) Validate() error {
+	var errs []error
+
+	require(&errs, b.ID != "", "id is required")
+	require(&errs, b.ClusterID != "", "cluster_id is required")
+	require(&errs, b.BranchType != "", "branch_type is required")
+	require(&errs, b.Symptom != "", "symptom is required")
+	require(&errs, validInvestigationStatus(b.Status), fmt.Sprintf("unsupported status %q", b.Status))
+	require(&errs, b.DisplayStatus != "", "display_status is required")
+	require(&errs, b.UserMessage != "", "user_message is required")
+	require(&errs, !b.CreatedAt.IsZero(), "created_at is required")
+	require(&errs, !b.UpdatedAt.IsZero(), "updated_at is required")
+	require(&errs, !b.UpdatedAt.Before(b.CreatedAt), "updated_at must be at or after created_at")
+
+	for index, event := range b.TimelineEvents {
+		errs = append(errs, prefixErr(fmt.Sprintf("timeline_events[%d]", index), event.Validate())...)
+	}
+	for index, ref := range b.KnowledgeRefs {
+		errs = append(errs, prefixErr(fmt.Sprintf("knowledge_refs[%d]", index), ref.Validate())...)
+	}
+
+	return errors.Join(errs...)
+}
+
 func (p RemediationPlan) Validate() error {
 	var errs []error
 
@@ -257,6 +313,18 @@ func (r RemediationEvent) Validate() error {
 	require(&errs, r.Message != "", "message is required")
 	require(&errs, r.Severity != "", "severity is required")
 	require(&errs, !r.Timestamp.IsZero(), "timestamp is required")
+
+	return errors.Join(errs...)
+}
+
+func (e TimelineEvent) Validate() error {
+	var errs []error
+
+	require(&errs, e.ID != "", "id is required")
+	require(&errs, e.Type != "", "type is required")
+	require(&errs, e.Message != "", "message is required")
+	require(&errs, e.Severity != "", "severity is required")
+	require(&errs, !e.Timestamp.IsZero(), "timestamp is required")
 
 	return errors.Join(errs...)
 }
@@ -382,6 +450,15 @@ func validRollbackType(value RollbackType) bool {
 func validSourceType(value SourceType) bool {
 	switch value {
 	case SourceTypeAutomatic, SourceTypeManual, SourceTypeIntegration:
+		return true
+	default:
+		return false
+	}
+}
+
+func validInvestigationStatus(value InvestigationStatus) bool {
+	switch value {
+	case InvestigationStatusRequested, InvestigationStatusFingerprinted, InvestigationStatusLinked, InvestigationStatusQueued, InvestigationStatusRunning, InvestigationStatusNeedsMoreData, InvestigationStatusCompleted, InvestigationStatusFailed, InvestigationStatusRejected:
 		return true
 	default:
 		return false

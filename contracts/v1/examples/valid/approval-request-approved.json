@@ -1,0 +1,31 @@
+{
+  "id": "approval_route_policy_001",
+  "remediation_plan_id": "rem_plan_route_policy_001",
+  "reason": "The route policy change is medium risk and changes production traffic routing.",
+  "risk_level": "medium_risk",
+  "requested_by": "ai-logfixer",
+  "status": "approved",
+  "approver": "ops-lead@example.invalid",
+  "decided_at": "2026-05-21T08:09:30Z",
+  "user_message": "The remediation was approved by an authorized operator.",
+  "next_actions": [
+    {
+      "id": "next_execute_approved_fix",
+      "label": "Execute fix",
+      "action_type": "execute_remediation",
+      "description": "Run the approved remediation through AI LogFixer.",
+      "enabled": true
+    }
+  ],
+  "external_refs": [
+    {
+      "system": "github",
+      "type": "issue",
+      "id": "INC-503",
+      "url": "https://github.com/CloudSpaceLab/ai-logfixer/issues/503",
+      "metadata": {
+        "approval_source": "fixture"
+      }
+    }
+  ]
+}
